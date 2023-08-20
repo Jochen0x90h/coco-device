@@ -24,24 +24,40 @@ public:
 	bool busy() {return state() == State::BUSY;}
 
 	/**
-		Wait until the device is in the given state (e.g. co_await file.untilState(File::State::OPEN))
-		@param state state to wait for
-		@return use co_await on return value to await the given state
+		Wait for a state change
+		@param waitFlags flags that indicate in which states to wait for a state change
+		@return use co_await on return value to await a state change
 	*/
-	virtual Awaitable<State> untilState(State state) = 0;
-	virtual Awaitable<State> untilDisabled() {return untilState(State::DISABLED);}
-	virtual Awaitable<State> untilReady() {return untilState(State::READY);}
-	virtual Awaitable<State> untilBusy() {return untilState(State::BUSY);}
+	[[nodiscard]] virtual Awaitable<> stateChange(int waitFlags = -1) = 0;
 
 	/**
-		Get number of buffers of the device
+		Wait until the device becomes disabled. Does not wait when the device is in DISABLED state.
+		@return use co_await on return value to wait until the device becomes disabled
 	*/
-	virtual int getBufferCount() = 0;
+	[[nodiscard]] Awaitable<> untilDisabled() {
+		return stateChange(~(1 << int(State::DISABLED)));
+	}
 
 	/**
-		Get the buffer at the given index
+		Wait until the device becomes ready. Does not wait when the device is in READY state.
+		@return use co_await on return value to wait until the device becomes ready
 	*/
-	virtual Buffer &getBuffer(int index) = 0;
+	[[nodiscard]] Awaitable<> untilReady() {
+		return stateChange(~(1 << int(State::READY)));
+	}
+
+	/**
+		Wait until the device becomes not busy (ready or disabled). Does not wait when the device is in READY or DISABLED state.
+		@return use co_await on return value to wait until the device becomes ready or disabled
+	*/
+	[[nodiscard]] Awaitable<> untilNotBusy() {
+		return stateChange(1 << int(State::BUSY));
+	}
+
+	/**
+		Close the device. May not take effect immediately, therefore use co_await untilDisabled() to wait until close completes.
+	*/
+	virtual void close();
 };
 
 } // namespace coco

@@ -7,8 +7,10 @@ target_sources(${PROJECT_NAME}
 		BufferWriter.hpp
 		DataBuffer.hpp
 		Device.hpp
+		BufferDevice.hpp
 	PRIVATE
 		BufferImpl.cpp
+		Device.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}
