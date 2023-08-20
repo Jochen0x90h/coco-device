@@ -120,6 +120,15 @@ public:
 		return hi | uint64_t(u32B());
 	}
 
+	float f64L() {
+		union Value {
+			uint64_t i;
+			double f;
+		};
+		Value v = {.i = u64L()};
+		return v.f;
+	}
+
 	/**
 		Read a byte array of fixed length (e.g. data8<10>())
 		@tparam N length of buffer

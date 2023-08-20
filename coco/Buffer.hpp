@@ -8,16 +8,18 @@
 
 namespace coco {
 
-// helpers
-constexpr int align4(int x) {return ((x + 3) & ~3);}
-constexpr int align(int x, int n) {return ((x + n - 1) & ~(n - 1));}
-
 /**
-	Buffer used for data transfer to/from hardware devices. Typically each device provides its own buffer implementation.
-	A Buffer contains an actual data buffer of size given by capacity() and a current size given by size().
+	Buffer used for data transfer to/from hardware devices. Typically each device provides its own buffer
+	implementation. A Buffer contains an actual data buffer of size given by size() and after a transfer the
+	transferred number of bytes can be obtained by transferred().
 
-	A data transfer can be started by start() which does not block. This internally starts for example a DMA transfer.
-	Use the untilXXX-Methods to wait until the buffer transitions into a given state, e.g. co_await untilReady() to wait for completion of the transfer.
+	A data transfer can be started by start() which does not block. This internally starts for example a DMA transfer
+	and changes the state to BUSY.
+	Use the convenience methods e.g. co_await buffer.read() or co_await buffer.write(size) to read or write data.
+	Use co_await buffer.untilReady() to wait until a buffer becomes ready after opening the device or until completion
+	of a transfer.
+	Use co_await buffer.untilNotBusy() to wait until a buffer becomes ready after a transfer or disabled because the
+	device was closed.
 */
 class Buffer {
 public:
@@ -25,17 +27,17 @@ public:
 		/**
 			Buffer is disabled because the owning device is e.g. not connected
 		*/
-		DISABLED,
+		DISABLED = 0,
 
 		/**
 			Buffer is ready and a transfer can be started
 		*/
-		READY,
+		READY = 1,
 
 		/**
 			Transfer is in progress
 		*/
-		BUSY,
+		BUSY = 2,
 	};
 
 	enum class Op {
@@ -96,64 +98,110 @@ public:
 	bool busy() {return state() == State::BUSY;}
 
 	/**
-		Wait until the buffer is in the given state (e.g. co_await buffer.targetState(State::READY))
-		@param state state to wait for
-		@return use co_await on return value to await the given state
+		Wait for a state change, for example when a buffer is busy to wait until it becomes ready again (transfer
+		completed)
+		@param waitFlags flags that indicate in which states to wait for a state change
+		@return use co_await on return value to await a state change
 	*/
-	[[nodiscard]] virtual Awaitable<State> untilState(State state) = 0;
-	[[nodiscard]] Awaitable<State> untilDisabled() {return untilState(State::DISABLED);}
-	[[nodiscard]] Awaitable<State> untilReady() {return untilState(State::READY);}
-	[[nodiscard]] Awaitable<State> untilBusy() {return untilState(State::BUSY);}
+	[[nodiscard]] virtual Awaitable<> stateChange(int waitFlags = -1) = 0;
 
+	/**
+		Wait until the buffer becomes disabled. Does not wait when the buffer is in DISABLED state.
+	*/
+	[[nodiscard]] Awaitable<> untilDisabled() {
+		return stateChange(~(1 << int(State::DISABLED)));
+	}
+
+	/**
+		Wait until the buffer becomes ready. Does not wait when the buffer is in READY state.
+
+		Usage example:
+		co_await buffer.untilReady();
+		while (buffer.ready()) {
+			// use buffer
+		}
+
+		@return use co_await on return value to wait until the buffer becomes ready
+	*/
+	[[nodiscard]] Awaitable<> untilReady() {
+		return stateChange(~(1 << int(State::READY)));
+	}
+
+	/**
+		Wait until the buffer becomes not busy (ready or disabled). Does not wait when the buffer is in READY or DISABLED state.
+
+		Usage example:
+		co_await buffer.untilNotBusy();
+		if (!buffer.ready()) {
+			// abort as buffer is disabled
+		}
+		// use buffer
+
+		@return use co_await on return value to wait until the buffer becomes ready or disabled
+	*/
+	[[nodiscard]] Awaitable<> untilNotBusy() {
+		return stateChange(1 << int(State::BUSY));
+	}
 
 	/**
 		Set the header. The data stays unchanged unless explicitly stated in the derived implementation.
+		@return true if successful, false on error
 	*/
 	virtual bool setHeader(const uint8_t *data, int size) = 0;
 
 	/**
 		Convenience function for setting the header to some value, e.g. setHeader<uint32_t>(50); or setHeader(header);
+		@return true if successful, false on error
 	*/
 	template <typename T>
-	void setHeader(const T &header) {
-		bool result = setHeader(reinterpret_cast<const uint8_t *>(&header), sizeof(T));
+	bool setHeader(const T &header) {
+		return setHeader(reinterpret_cast<const uint8_t *>(&header), sizeof(T));
 	}
 
 	/**
 		Convenience function for clearing the header
+		@return true if successful, false on error
 	*/
-	void clearHeader() {setHeader(nullptr, 0);}
+	bool clearHeader() {
+		bool result = setHeader(nullptr, 0);
+		return result;
+	}
 
 	/**
 		Get the header
+		@return true if successful, false on error
 	*/
 	virtual bool getHeader(uint8_t *data, int size) = 0;
 
 	/**
 		Convenience function for getting the header, e.g. header = getHeader<uint32_t>();
+		@return header value if successful, default initialized value on error which is considered a bug
 	*/
 	template <typename T>
 	T getHeader() {
-		T header;
+		T header = {};
 		bool result = getHeader(reinterpret_cast<uint8_t *>(&header), sizeof(T));
+		assert(result);
 		return header;
 	}
 
 	/**
 		Convenience function for getting the header, e.g. getHeader(header);
+		@return true if successful, false on error
 	*/
 	template <typename T>
-	void getHeader(T &header) {
+	bool getHeader(T &header) {
 		bool result = getHeader(reinterpret_cast<uint8_t *>(&header), sizeof(T));
-		assert(result);
+		return result;
 	}
 
 
 	/**
-		Start transfer of the buffer if it is in READY state and set it to BUSY state
+		Start transfer of the buffer if it is in READY state and set it to BUSY state if the operation does not
+		complete immediately. If the buffer completes immediately, it stays in READY state.
 		@param op operation flags such as READ or WRITE
 		@param size size of data to transfer
-		@return true if transfer was started (changed from READY to BUSY state), false on error
+		@return true if successful, false on error or when size is out of range which is considered a bug
 	*/
 	bool start(int size, Op op) {
 		if (size >= 0 && size <= this->siz)
@@ -172,9 +220,9 @@ public:
 	/**
 		Convenience function for acquiring a buffer, i.e. cancel if necessary and wait until ready
 	*/
-	[[nodiscard]] Awaitable<State> acquire() {
+	[[nodiscard]] Awaitable<> acquire() {
 		cancel();
-		return untilState(State::READY);
+		return untilNotBusy();
 	}
 
 
@@ -187,6 +235,7 @@ public:
 
 	/**
 		Index operator
+		@param index index, an index which is out of range is considered a bug
 	*/
 	uint8_t &operator [](int index) {
 		assert(uint32_t(index) < uint32_t(this->siz));
@@ -223,9 +272,13 @@ public:
 		@param op additional operation flag
 		@return use co_await on return value to await completion of receive operation
 	*/
-	[[nodiscard]] Awaitable<State> read(Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> read(Op op = Op::NONE) {
 		startInternal(this->siz, Op(int(Op::READ) | int(op)));
-		return untilState(State::READY);
+		return untilNotBusy();
+	}
+
+	void startRead(Op op = Op::NONE) {
+		startInternal(this->siz, Op(int(Op::READ) | int(op)));
 	}
 
 	/**
@@ -234,9 +287,27 @@ public:
 		@param op additional operation flag
 		@return use co_await on return value to await completion of read operation
 	*/
-	[[nodiscard]] Awaitable<State> read(int size, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> read(int size, Op op = Op::NONE) {
 		start(size, Op(int(Op::READ) | int(op)));
-		return untilState(State::READY);
+		return untilNotBusy();
+	}
+
+	void startRead(int size, Op op = Op::NONE) {
+		start(this->siz, Op(int(Op::READ) | int(op)));
+	}
+
+	/**
+		Convenience function for writing the whole buffer
+		@param op additional operation flag
+		@return use co_await on return value to await completion of write operation
+	*/
+	[[nodiscard]] Awaitable<> write(Op op = Op::NONE) {
+		start(this->siz, Op(int(Op::WRITE) | int(op)));
+		return untilNotBusy();
+	}
+
+	void startWrite(Op op = Op::NONE) {
+		start(this->siz, Op(int(Op::WRITE) | int(op)));
 	}
 
 	/**
@@ -245,9 +316,13 @@ public:
 		@param op additional operation flag
 		@return use co_await on return value to await completion of write operation
 	*/
-	[[nodiscard]] Awaitable<State> write(int size, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> write(int size, Op op = Op::NONE) {
 		start(size, Op(int(Op::WRITE) | int(op)));
-		return untilState(State::READY);
+		return untilNotBusy();
+	}
+
+	void startWrite(int size, Op op = Op::NONE) {
+		start(size, Op(int(Op::WRITE) | int(op)));
 	}
 
 	/**
@@ -256,9 +331,13 @@ public:
 		@param op additional operation flag
 		@return use co_await on return value to await completion of write operation
 	*/
-	[[nodiscard]] Awaitable<State> write(uint8_t *end, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> write(uint8_t *end, Op op = Op::NONE) {
 		start(end - this->dat, Op(int(Op::WRITE) | int(op)));
-		return untilState(State::READY);
+		return untilNotBusy();
+	}
+
+	void startWrite(uint8_t *end, Op op = Op::NONE) {
+		start(end - this->dat, Op(int(Op::WRITE) | int(op)));
 	}
 
 	/**
@@ -269,14 +348,15 @@ public:
 		@return use co_await on return value to await completion of write operation
 	*/
 	template <typename T>
-	[[nodiscard]] Awaitable<State> writeValue(const T &value, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> writeValue(const T &value, Op op = Op::NONE) {
 		if (sizeof(value) <= this->siz) {
 			*reinterpret_cast<T *>(this->dat) = value;
 			startInternal(sizeof(value), Op(int(Op::WRITE) | int(op)));
 		} else {
+			// error: size of value too large
 			assert(false);
 		}
-		return untilState(State::READY);
+		return untilNotBusy();
 	}
 
 	/**
@@ -286,14 +366,29 @@ public:
 		@param op additional operation flag
 		@return use co_await on return value to await completion of write operation
 	*/
-	[[nodiscard]] Awaitable<State> writeData(const uint8_t *data, int size, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> writeData(const void *data, int size, Op op = Op::NONE) {
 		if (size >= 0 && size <= this->siz) {
+			auto d = reinterpret_cast<const uint8_t *>(data);
+			std::copy(d, d + size, this->dat);
+			startInternal(size, Op(int(Op::WRITE) | int(op)));
+		} else {
+			// error: size of data too large or negative
+			assert(false);
+		}
+		return untilNotBusy();
+	}
+
+	[[nodiscard]] Awaitable<> writeData(Buffer &buffer, Op op = Op::NONE) {
+		int size = buffer.size();
+		if (size >= 0 && size <= this->siz) {
+			auto data = buffer.data();
 			std::copy(data, data + size, this->dat);
 			startInternal(size, Op(int(Op::WRITE) | int(op)));
 		} else {
+			// error: size of data too large or negative
 			assert(false);
 		}
-		return untilState(State::READY);
+		return untilNotBusy();
 	}
 
 	/**
@@ -304,7 +399,7 @@ public:
 		@return use co_await on return value to await completion of write operation
 	*/
 	template <typename T>
-	[[nodiscard]] Awaitable<State> writeArray(const T &array, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> writeArray(const T &array, Op op = Op::NONE) {
 		auto src = std::data(array);
 		auto dst = reinterpret_cast<std::add_pointer_t<std::remove_const_t<std::remove_reference_t<decltype(*src)>>>>(this->dat);
 
@@ -313,11 +408,12 @@ public:
 		if (size <= this->siz) {
 			auto end = src + count;
 			std::copy(src, end, dst);
+			startInternal(size, Op(int(Op::WRITE) | int(op)));
 		} else {
+			// error: size of data too large or negative
 			assert(false);
 		}
-		startInternal(size, Op(int(Op::WRITE) | int(op)));
-		return untilState(State::READY);
+		return untilNotBusy();
 	}
 
 	/**
@@ -326,16 +422,16 @@ public:
 		@param op additional operation flag
 		@return use co_await on return value to await completion of write operation
 	*/
-	[[nodiscard]] Awaitable<State> writeString(String str, Op op = Op::NONE) {
+	[[nodiscard]] Awaitable<> writeString(String str, Op op = Op::NONE) {
 		return writeData(reinterpret_cast<const uint8_t *>(str.data()), str.size(), op);
 	}
 
 	/**
 		Convenience function for sending an erase command e.g. to an SPI or I2C flash memory
 	*/
-	[[nodiscard]] Awaitable<State> erase() {
+	[[nodiscard]] Awaitable<> erase() {
 		startInternal(0, Op::ERASE);
-		return untilState(State::READY);
+		return untilNotBusy();
 	}
 
 
