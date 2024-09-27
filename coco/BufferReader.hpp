@@ -11,23 +11,45 @@ namespace coco {
 class BufferReader {
 public:
 	BufferReader() : current(), end() {}
-	template <int N>
-	explicit BufferReader(uint8_t (&array)[N]) : current(array), end(array + N) {}
-	BufferReader(uint8_t *buffer, uint8_t *end) : current(buffer), end(end) {}
-	BufferReader(uint8_t *buffer, int length) : current(buffer), end(buffer + length) {}
-	BufferReader(Buffer &buffer) : current(buffer.begin()), end(buffer.begin() + buffer.transferred()) {}
+	BufferReader(const uint8_t *begin, uint8_t *end) : current(begin), end(end) {}
+	BufferReader(const uint8_t *data, int length) : current(data), end(data + length) {}
 
 	/**
-		Reset the reader to the given current position
-	*/
-	void reset(uint8_t *current) {this->current = current;}
+	 * Constructor for buffer supporting std::data() and std::size()
+	 */
+	template <typename T>
+	BufferReader(const T &buffer) : current(std::data(buffer)), end(std::data(buffer) + std::size(buffer)) {}
 
 	/**
-		Reset the reader to the given buffer
-	*/
-	void reset(Buffer &buffer) {
-		this->current = buffer.begin();
-		this->end = buffer.begin() + buffer.transferred();
+	 * Reset the reader to the given current position without changing end position
+	 */
+	void reset(const uint8_t *current) {this->current = current;}
+
+	/**
+	 * Assign the given data to the reader
+	 */
+	void assign(const uint8_t *data, int length) {
+		this->current = data;
+		this->end = data + length;
+	}
+
+	/**
+	 * Assign the given buffer supporting std::data() and std::size()
+	 */
+	template <typename T>
+	void assign(T &buffer) {
+		this->current = std::data(buffer);
+		this->end = this->current + std::size(buffer);
+	}
+
+	int8_t i8() {
+		int8_t value = this->current[0];
+		++this->current;
+		return value;
+	}
+
+	int8_t peekI8() const {
+		return this->current[0];
 	}
 
 	uint8_t u8() {
@@ -61,18 +83,20 @@ public:
 		return value;
 	}
 
-	uint16_t u16L() {
-		auto current = this->current;
-		uint16_t value = current[0] | (current[1] << 8);
-		this->current += 2;
-		return value;
-	}
-
-	uint16_t u16B() {
+	int16_t i16B() {
 		auto current = this->current;
 		uint16_t value = (current[0] << 8) | current[1];
 		this->current += 2;
 		return value;
+	}
+
+	uint16_t u16L() {
+		return i16L();
+	}
+
+
+	uint16_t u16B() {
+		return i16B();
 	}
 
 	template <typename T>
@@ -87,26 +111,46 @@ public:
 		return T(u16B());
 	}
 
-	uint32_t u32L() {
+	int32_t i32L() {
 		auto current = this->current;
-		uint32_t value = current[0] | (current[1] << 8) | (current[2] << 16) | (current[3] << 24);
+		int32_t value = current[0] | (current[1] << 8) | (current[2] << 16) | (current[3] << 24);
 		this->current += 4;
 		return value;
 	}
 
-	uint32_t u32B() {
+	uint32_t i32B() {
 		auto current = this->current;
 		uint32_t value = (current[0] << 24) | (current[1] << 16) | (current[2] << 8) | current[3];
 		this->current += 4;
 		return value;
 	}
 
+	uint32_t u32L() {
+		return i32L();
+	}
+
+	uint32_t u32B() {
+		return i32B();
+	}
+
+	template <typename T>
+	T e32L() {
+		static_assert(std::is_same<typename std::underlying_type<T>::type, uint32_t>::value);
+		return T(u32L());
+	}
+
+	template <typename T>
+	T e32B() {
+		static_assert(std::is_same<typename std::underlying_type<T>::type, uint32_t>::value);
+		return T(u32B());
+	}
+
 	float f32L() {
 		union Value {
-			uint32_t i;
+			int32_t i;
 			float f;
 		};
-		Value v = {.i = u32L()};
+		Value v = {.i = i32L()};
 		return v.f;
 	}
 
@@ -130,10 +174,10 @@ public:
 	}
 
 	/**
-		Read a byte array of fixed length (e.g. data8<10>())
-		@tparam N length of buffer
-		@return array
-	*/
+	 * Read a byte array of fixed length (e.g. data8<10>())
+	 * @tparam N length of buffer
+	 * @return array
+	 */
 	template <int N>
 	Array<const uint8_t, N> data8() {
 		auto ar = this->current;
@@ -160,9 +204,9 @@ public:
 	}
 
 	/**
-		Read string until end of data
-		@return string
-	*/
+	 * Read string until end of data
+	 * @return string
+	 */
 	String string() {
 		auto str = this->current;
 		this->current = this->end;
@@ -170,9 +214,9 @@ public:
 	}
 
 	/**
-		Read string with 8 bit length
-		@return string
-	*/
+	 * Read string with 8 bit length
+	 * @return string
+	 */
 	String string8() {
 		int length = u8();
 		auto str = this->current;
@@ -181,10 +225,10 @@ public:
 	}
 
 	/**
-		Read string with given length
-		@param length length of string
-		@return string
-	*/
+	 * Read string with given length
+	 * @param length length of string
+	 * @return string
+	 */
 	String string(int length) {
 		auto str = this->current;
 		this->current += length;
@@ -192,9 +236,9 @@ public:
 	}
 
 	/**
-		Read a string that represents a floating point number (e.g. "1.3", exponential notation not supported)
-		@return string containing a floating point number
-	*/
+	 * Read a string that represents a floating point number (e.g. "1.3", exponential notation not supported)
+	 * @return string containing a floating point number
+	 */
 	String floatString() {
 		auto str = this->current;
 		auto it = str;
@@ -207,16 +251,16 @@ public:
 	}
 
 	/**
-		Skip some bytes
-		@param n number of bytes to skip
-	*/
+	 * Skip some bytes
+	 * @param n number of bytes to skip
+	 */
 	void skip(int n) {
 		this->current += n;
 	}
 
 	/**
-		Skip white space
-	*/
+	 * Skip white space
+	 */
 	void skipSpace() {
 		auto it = this->current;
 		while (it < this->end && (*it == ' ' || *it == '\t'))
@@ -225,32 +269,39 @@ public:
 	}
 
 	/**
-		Check if the reader is still valid, i.e. did not read past the end
-		@return true when before or at the end
-	*/
+	 * Check if the reader is still valid, i.e. did not read past the end
+	 * @return true when before or at the end
+	 */
 	bool isValid() const {
 		return this->current <= this->end;
 	}
 
 	/**
-		Check if we are at the end of the data
-		@return true when at or past the end
-	*/
+	 * Check if we are at the end of the data
+	 * @return true when at or past the end
+	 */
 	bool atEnd() const {
 		return this->current >= this->end;
 	}
 
 	/**
-		Get remaining number of bytes in the data
-		@return number of remaining bytes
-	*/
+	 * Get remaining number of bytes in the data
+	 * @return number of remaining bytes
+	 */
 	int remaining() const {
 		return int(this->end - this->current);
 	}
 
+	/**
+	 * Cast to pointer
+	 */
+	operator const uint8_t *() const {
+		return this->current;
+	}
 
-	uint8_t *current;
-	uint8_t *end;
+
+	const uint8_t *current;
+	const uint8_t *end;
 };
 
 } // namespace coco

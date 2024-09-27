@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 
 # set project
-project(coco-buffer)
+project(coco-device)
 
 # configure languages
 enable_language(CXX)
@@ -25,7 +25,7 @@ message("*** Platform: ${PLATFORM}")
 
 # dependencies
 find_package(coco CONFIG)
-find_package(coco-devboards CONFIG)
+find_package(coco-loop CONFIG)
 
 
 add_subdirectory(coco)
@@ -36,6 +36,7 @@ if(NOT ${CMAKE_CROSSCOMPILING})
 
 	# enable testing, adds test or RUN_TESTS target to run all tests
 	enable_testing()
+
+	add_subdirectory(test)
 endif()
 
-add_subdirectory(test)
