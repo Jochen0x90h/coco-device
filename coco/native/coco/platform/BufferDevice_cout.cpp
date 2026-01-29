@@ -6,98 +6,105 @@
 namespace coco {
 
 BufferDevice_cout::BufferDevice_cout(Loop_native &loop, std::string_view name, Milliseconds<> delay)
-	: BufferDevice(State::READY), loop(loop), name(name), delay(delay), callback(makeCallback<BufferDevice_cout, &BufferDevice_cout::handle>(this))
+    : BufferDevice(State::READY)
+    , loop_(loop)
+    , name_(name)
+    , delay_(delay)
+    , callback_(makeCallback<BufferDevice_cout, &BufferDevice_cout::handle>(this))
 {
 }
 
 BufferDevice_cout::~BufferDevice_cout() {
 }
 
-//StateTasks<const Device::State, Device::Events> &BufferDevice_cout::getStateTasks() {
-	//return makeConst(this->st);
-//}
-
 int BufferDevice_cout::getBufferCount() {
-	return this->buffers.count();
+    return buffers_.count();
 }
 
 BufferDevice_cout::Buffer &BufferDevice_cout::getBuffer(int index) {
-	return this->buffers.get(index);
+    return buffers_.get(index);
 }
 
 void BufferDevice_cout::handle() {
-	auto buffer = this->transfers.pop();
-	if (buffer != nullptr) {
-		std::cout << this->name << ": ";
+    auto buffer = transfers_.pop();
+    if (buffer != nullptr) {
+        std::cout << name_ << ": ";
 
-		auto op = buffer->op;
-		int headerSize = buffer->p.headerSize;
-		int count = buffer->p.size - headerSize;
-		if ((op & Buffer::Op::COMMAND) != 0)
-			std::cout << "command ";
-		if (headerSize > 0)
-			std::cout << "header " << headerSize << ' ';
-		if ((op & Buffer::Op::READ) != 0)
-			std::cout << "read ";
-		if ((op & Buffer::Op::WRITE) != 0)
-			std::cout << "write ";
-		std::cout << count << std::endl;
+        auto op = buffer->op_;
+        int headerCapacity = buffer->headerCapacity_;
+        int count = buffer->size_;
+        //if ((op & Buffer::Op::COMMAND) != 0)
+        //	std::cout << "command ";
+        if (headerCapacity > 0)
+            std::cout << "header " << headerCapacity << " (" << int(buffer->headerType_) << ") ";
+        if ((op & Buffer::Op::READ) != 0)
+            std::cout << "read ";
+        if ((op & Buffer::Op::WRITE) != 0)
+            std::cout << "write ";
+        std::cout << count << std::endl;
 
-		// check if there are more buffers in the list
-		if (!this->transfers.empty())
-			this->loop.invoke(this->callback, this->delay);
+        // check if there are more buffers in the list
+        if (!transfers_.empty())
+            loop_.invoke(callback_, delay_);
 
-		// set buffer to ready state and notify application
-		buffer->setReady();
-	}
+        // set buffer to ready state and notify application
+        buffer->setReady();
+    }
 }
 
 
 // Buffer
 
 BufferDevice_cout::Buffer::Buffer(int capacity, BufferDevice_cout &device)
-	: coco::Buffer(new uint8_t[capacity], capacity, State::READY)
-	, device(device)
+    : coco::Buffer(new uint8_t[capacity], 0, 0, capacity, State::READY)
+    , device_(device)
 {
-	device.buffers.add(*this);
+    device.buffers_.add(*this);
+}
+
+BufferDevice_cout::Buffer::Buffer(int headerCapacity, int capacity, BufferDevice_cout &device)
+    : coco::Buffer(new uint8_t[headerCapacity + capacity], headerCapacity, 0, capacity, State::READY)
+    , device_(device)
+{
+    device.buffers_.add(*this);
 }
 
 BufferDevice_cout::Buffer::~Buffer() {
-	delete [] this->p.data;
+    delete [] header_;
 }
 
 bool BufferDevice_cout::Buffer::start(Op op) {
-	if (this->st.state != State::READY) {
-		// staring a buffer that is busy is considered a bug
-		assert(this->st.state != State::BUSY);
-		return false;
-	}
+    if (st.state != State::READY) {
+        // staring a buffer that is busy is considered a bug
+        assert(st.state != State::BUSY);
+        return false;
+    }
 
-	// check if READ or WRITE flag is set
-	assert((op & Op::READ_WRITE) != 0);
+    // check if READ or WRITE flag is set
+    assert((op & Op::READ_WRITE) != 0);
 
-	this->op = op;
+    op = op;
 
-	// add buffer to list of transfers and let event loop call I2cMaster_cout::handle() when the first was added
-	if (this->device.transfers.push(*this))
-		this->device.loop.invoke(this->device.callback, this->device.delay);
+    // add buffer to list of transfers and let event loop call I2cMaster_cout::handle() when the first was added
+    if (device_.transfers_.push(*this))
+        device_.loop_.invoke(device_.callback_, device_.delay_);
 
-	// set state
-	setBusy();
+    // set state
+    setBusy();
 
-	return true;
+    return true;
 }
 
 bool BufferDevice_cout::Buffer::cancel() {
-	if (this->st.state != State::BUSY)
-		return false;
+    if (st.state != State::BUSY)
+        return false;
 
-	// small transfers can be cancelled immeditely, otherwise cancel has no effect (this is arbitrary and only for testing)
-	if (this->p.size < 4) {
-		this->device.transfers.remove(*this);
-		setReady(0);
-	}
-	return true;
+    // small transfers can be cancelled immediately, otherwise cancel has no effect (this is arbitrary and only for testing)
+    if (size_ < 4) {
+        device_.transfers_.remove(*this);
+        setReady(0);
+    }
+    return true;
 }
 
 } // namespace coco

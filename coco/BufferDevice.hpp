@@ -6,22 +6,19 @@
 
 namespace coco {
 
-/**
-	A device that has associated transfer buffers.
-*/
+/// @brief A device that has associated transfer buffers.
+///
 class BufferDevice : public Device {
 public:
-	BufferDevice(State state) : Device(state) {}
+    BufferDevice(State state) : Device(state) {}
 
-	/**
-	 * Get number of buffers of the device
-	 */
-	virtual int getBufferCount() = 0;
+    /// @brief Get number of buffers of the device.
+    ///
+    virtual int getBufferCount() = 0;
 
-	/**
-	 * Get the buffer at the given index
-	 */
-	virtual Buffer &getBuffer(int index) = 0;
+    /// @brief Get the buffer at the given index.
+    ///
+    virtual Buffer &getBuffer(int index) = 0;
 };
 
 } // namespace coco

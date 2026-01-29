@@ -23,14 +23,14 @@ class Project(ConanFile):
         return False
 
     def requirements(self):
-        self.requires("coco/0.7.0", options={"platform": self.options.platform})
-        self.requires("coco-loop/0.6.0", options={"platform": self.options.platform})
+        self.requires("coco/0.8.0", options={"platform": self.options.platform})
+        self.requires("coco-loop/0.7.0", options={"platform": self.options.platform})
 
     def build_requirements(self):
-        self.tool_requires("coco-toolchain/0.3.0", options={"platform": self.options.platform})
+        self.tool_requires("coco-toolchain/0.4.0", options={"platform": self.options.platform})
         if not self.cross():
             # platform is based on a "normal" operating system such as Windows, MacOS, Linux
-            self.test_requires("gtest/1.14.0")
+            self.test_requires("gtest/1.17.0")
 
     keep_imports = True
     def imports(self):
