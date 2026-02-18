@@ -31,7 +31,7 @@ public:
         Buffer(int headerCapacity, int capacity, BufferDevice_cout &device);
         ~Buffer() override;
 
-        bool start(Op op) override;
+        bool start() override;
         bool cancel() override;
 
     protected:

@@ -1,8 +1,10 @@
 #pragma once
 
-#include "StateTasks.hpp"
+//#include "StateTasks.hpp"
 #include <coco/Coroutine.hpp>
 #include <coco/enum.hpp>
+#include <cstdint>
+#include <system_error>
 
 
 namespace coco {
@@ -35,7 +37,7 @@ namespace coco {
 class Device {
 public:
     /// device state
-    enum class State {
+    enum class State : uint8_t {
         /// @brief Device is disabled e.g. a file closed or a socket disconnected
         ///
         DISABLED = 0,
@@ -100,7 +102,7 @@ public:
 
     /// @brief Constructor
     /// @param state initial state of the device
-    Device(State state) : st(state) {}
+    Device(State state) : state_(state) {}
 
     /// @brief Destructor. Note that it is not always allowed to destroy a device. For example for BufferDevice, no buffer may
     /// be in BUSY state.
@@ -109,53 +111,53 @@ public:
 
     /// @brief Get current state
     /// @return state
-    State state() {return this->st.state;}
+    State state() {return state_;}
 
     /// @brief Returns true if the device is disabled
     ///
-    bool disabled() {return this->st.state == State::DISABLED;}
+    bool disabled() {return state_ == State::DISABLED;}
 
     /// @brief Returns true if the device is opening
     ///
-    bool opening() {return this->st.state == State::OPENING;}
+    bool opening() {return state_ == State::OPENING;}
 
     /// @brief Returns true if the device is ready
     ///
-    bool ready() {return this->st.state == State::READY;}
+    bool ready() {return state_ == State::READY;}
 
     /// @brief Returns true if the device is closing
     ///
-    bool closing() {return this->st.state == State::CLOSING;}
+    bool closing() {return state_ == State::CLOSING;}
 
     /// @brief Wait until the device state changed, e.g. from OPENING to READY
     /// @return use co_await on return value to await a state change
-    [[nodiscard]] Awaitable<Events> untilStateChanged() {return {this->st.tasks, Events::ENTER_ANY};}
+    [[nodiscard]] Awaitable<Events> untilStateChanged() {return {tasks_, Events::ENTER_ANY};}
 
     /// @brief Wait until the device is disabled. Does not wait when the device is already in DISABLED state.
     /// @return use co_await on return value to wait until the device becomes disabled
     [[nodiscard]] Awaitable<Events> untilDisabled() {
         //auto &st = getStateTasks();
-        if (this->st.state == State::DISABLED)
+        if (state_ == State::DISABLED)
             return {};
-        return {this->st.tasks, Events::ENTER_DISABLED};
+        return {tasks_, Events::ENTER_DISABLED};
     }
 
     /// @brief Wait until the device is ready. Does not wait when the device is already in READY state.
     /// @return use co_await on return value to wait until the device becomes ready
     [[nodiscard]] Awaitable<Events> untilReady() {
         //auto &st = getStateTasks();
-        if (this->st.state == State::READY)
+        if (state_ == State::READY)
             return {};
-        return {this->st.tasks, Events::ENTER_READY};
+        return {tasks_, Events::ENTER_READY};
     }
 
     /// @brief Wait unless the device is ready or disabled. Does not wait when the device is in READY or DISABLED state.
     /// @return use co_await on return value to wait until the device becomes ready or disabled
     [[nodiscard]] Awaitable<Events> untilReadyOrDisabled() {
         //auto &st = getStateTasks();
-        if (this->st.state == State::READY || st.state == State::DISABLED)
+        if (state_ == State::READY || state_ == State::DISABLED)
             return {};
-        return {this->st.tasks, Events(int(Events::ENTER_READY) | int(Events::ENTER_DISABLED))};
+        return {tasks_, Events(int(Events::ENTER_READY) | int(Events::ENTER_DISABLED))};
     }
 
 
@@ -163,9 +165,73 @@ public:
     ///
     virtual void close();
 
+
+// error
+// -----
+
+    /// @brief Get the error code of the last operation.
+    /// Check for success: if (!buffer.error()) ...
+    /// Check if cancelled: buffer.error() == std::errc::operation_canceled
+    /// @return Error code
+    std::error_code error() {
+#ifdef NATIVE
+        // native platforms (Windows, Linux, macOS) use full std::error_code
+        return error_;
+#else
+        // embedded platforms directly use std::errc stored in an uint8_t
+        return std::error_code(error_, std::generic_category());
+#endif
+    }
+
+
 protected:
-    // state and tasks (waiting coroutines)
-    StateTasks<State, Events> st;
+    /// @brief Set success and number of transferred bytes.
+    ///
+    void setSuccess() {
+        error_ = {};
+    }
+
+    /// @brief Set generic error using std::errc.
+    /// @param error Error
+    void setError(std::errc error) {
+#ifdef NATIVE
+        error_ = std::make_error_code(error);
+#else
+        error_ = uint8_t(error);
+#endif
+    }
+
+#ifdef NATIVE
+    /// @brief Set system error originating from errno or GetLastError()/WSAGetLastError().
+    /// @param error System error
+    void setSystemError(int error) {
+        error_ = {error, std::system_category()};
+    }
+#endif
+
+    /// @brief Notify waiting coroutines about the given events.
+    /// @param events Event flags to notify
+    /// @return *this
+    auto &notify(Events events) {
+        // resume all coroutines waiting for the given event
+        tasks_.doAll([events](Events e) {
+            return (int(events) & int(e)) != 0;
+        });
+        return *this;
+    }
+
+    // current state of the buffer
+    State state_;
+
+    // result of last transfer operation
+#ifdef NATIVE
+    std::error_code error_;
+#else
+    uint8_t error_ = 0;
+#endif
+
+    // tasks (waiting coroutines)
+    CoroutineTaskList<Events> tasks_;
 };
 COCO_ENUM(Device::Events);
 

@@ -23,8 +23,8 @@ class Project(ConanFile):
         return False
 
     def requirements(self):
-        self.requires("coco/0.8.0", options={"platform": self.options.platform})
-        self.requires("coco-loop/0.7.0", options={"platform": self.options.platform})
+        self.requires("coco/linux", options={"platform": self.options.platform})
+        self.requires("coco-loop/linux", options={"platform": self.options.platform})
 
     def build_requirements(self):
         self.tool_requires("coco-toolchain/0.4.0", options={"platform": self.options.platform})

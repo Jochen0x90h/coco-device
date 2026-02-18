@@ -6,6 +6,7 @@
 #include <coco/enum.hpp>
 #include <coco/String.hpp>
 #include <coco/StringConcept.hpp>
+#include <system_error>
 
 
 namespace coco {
@@ -41,7 +42,7 @@ class Buffer {
 public:
     /// @brief State of the buffer.
     ///
-    enum class State {
+    enum class State : uint8_t {
         /// Buffer is disabled because the owning device is disabled, e.g. not connected
         ///
         DISABLED = 0,
@@ -101,7 +102,7 @@ public:
     };
 
     /// @brief Result of operation.
-    enum class Result : uint8_t {
+    /*enum class Result : uint8_t {
         /// Operation completed successfully
         ///
         SUCCESS = 0,
@@ -116,13 +117,33 @@ public:
         /// @brief An expected acknowledge was not received (e.g. unused i2c address or timeout waiting for acknowledge)
         ///
         NO_REPLY = 3,
-    };
+    };*/
 
     /// @brief Constructor
     /// @param buffer data
     /// @param capacity buffer capacity
     /// @param state initial state of the buffer
     Buffer(uint8_t *data, int capacity, State state)
+        : data_(data), header_(), capacity_(capacity), headerCapacity_(), state_(state), error_{} {}
+
+    Buffer(uint8_t *headerAndData, int headerCapacity, int capacity, State state)
+        : data_(headerAndData + headerCapacity), header_(headerAndData), capacity_(capacity)
+        , headerCapacity_(headerCapacity), state_(state), error_{} {}
+
+    Buffer(void *header, int headerCapacity, uint8_t *data, int capacity, State state)
+        : data_(data), header_((uint8_t *)header), capacity_(capacity)
+        , headerCapacity_(headerCapacity), state_(state), error_{} {}
+
+    Buffer(uint8_t *data, int capacity, Device::State state)
+        : Buffer(data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
+
+    Buffer(uint8_t *headerAndData, int headerCapacity, int capacity, Device::State state)
+        : Buffer(headerAndData, headerCapacity, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
+
+    Buffer(void *header, int headerCapacity, uint8_t *data, int capacity, Device::State state)
+        : Buffer(header, headerCapacity, data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
+
+    /*Buffer(uint8_t *data, int capacity, State state)
         : data_(data), header_(), capacity_(capacity), size_(), headerCapacity_(), headerType_()
         , result_(Result::SUCCESS), st(state) {}
 
@@ -142,6 +163,7 @@ public:
 
     Buffer(void *header, int headerCapacity, int type, uint8_t *data, int capacity, Device::State state)
         : Buffer(header, headerCapacity, type, data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
+*/
 
     /// @brief Destructor. Do not destroy a buffer that is in BUSY state.
     ///
@@ -153,30 +175,30 @@ public:
 
     /// @brief Get current state of the buffer
     /// @return State
-    State state() {return st.state;}
+    State state() {return state_;}
 
     /// @brief Returns true if the device is disabled
     ///
-    bool disabled() {return st.state == State::DISABLED;}
+    bool disabled() {return state_ == State::DISABLED;}
 
     /// @briei Returns true if the device is ready
     ///
-    bool ready() {return st.state == State::READY;}
+    bool ready() {return state_ == State::READY;}
 
     /// @brief Returns true if the device is ready
     ///
-    bool busy() {return st.state == State::BUSY;}
+    bool busy() {return state_ == State::BUSY;}
 
     /// @brief Wait until the buffer state changed, e.g. from BUSY to READY.
     /// @return Use co_await on return value to await a state change
-    [[nodiscard]] Awaitable<Events> untilStateChanged() {return {st.tasks, Events::ENTER_ANY};}
+    [[nodiscard]] Awaitable<Events> untilStateChanged() {return {tasks_, Events::ENTER_ANY};}
 
     /// @brief Wait until the buffer is disabled. Does not wait when the device is already in DISABLED state.
     /// @return Use co_await on return value to wait until the buffer becomes disabled
     [[nodiscard]] Awaitable<Events> untilDisabled() {
-        if (st.state == State::DISABLED)
+        if (state_ == State::DISABLED)
             return {};
-        return {st.tasks, Events::ENTER_DISABLED};
+        return {tasks_, Events::ENTER_DISABLED};
     }
 
     /// @brief Wait unless the buffer is ready. Does not wait when the buffer is in READY state.
@@ -189,9 +211,9 @@ public:
     ///
     /// @return Use co_await on return value to wait until the buffer becomes ready
     [[nodiscard]] Awaitable<Events> untilReady() {
-        if (st.state == State::READY)
+        if (state_ == State::READY)
             return {};
-        return {st.tasks, Events::ENTER_READY};
+        return {tasks_, Events::ENTER_READY};
     }
 
     /// @brief Wait unless the buffer is ready or disabled. Does not wait when the buffer is in READY or DISABLED state.
@@ -205,9 +227,9 @@ public:
     ///
     /// @return Use co_await on return value to wait until the buffer becomes ready or disabled
     [[nodiscard]] Awaitable<Events> untilReadyOrDisabled() {
-        if (st.state == State::READY || st.state == State::DISABLED)
+        if (state_ == State::READY || state_ == State::DISABLED)
             return {};
-        return {st.tasks, Events(int(Events::ENTER_READY) | int(Events::ENTER_DISABLED))};
+        return {tasks_, Events(int(Events::ENTER_READY) | int(Events::ENTER_DISABLED))};
     }
 
 
@@ -312,7 +334,7 @@ public:
         auto data = header_;
         return reinterpret_cast<T *>(data);
     }
-
+/*
     /// @brief Set the header type.
     /// This is device specific
     /// @tparam T Header type enum
@@ -343,7 +365,7 @@ public:
     /// @brief Get the header size.
     /// @return header size
     int headerSize() {return headerType_;}
-
+*/
 
 // data
 // ----
@@ -444,58 +466,149 @@ public:
 // --------
 
     /// @brief Start transfer of the buffer if it is in READY state and set it to BUSY state if the operation does not
-    /// complete immediately. If the buffer completes immediately, it stays in READY state. Depending on the underlying device
-    /// and transfer direction, either the whole buffer gets transferred or only the current size.
-    /// @param op operation flags such as READ or WRITE
+    /// complete immediately. If the buffer completes immediately, it stays in READY state. Depending on the underlying
+    /// device and transfer direction, either the whole buffer gets transferred or only the current size.
     /// @return true if successful, false on error e.g. when the state is DISABLED or BUSY. Calling start() on a busy
-    /// buffer is considered a bug
-    virtual bool start(Op op) = 0;
+    /// buffer is considered a bug and triggers an assertion if enabled.
+    virtual bool start() = 0;
 
-    /// @brief Convenience method for start() that sets the current buffer size
-    /// @param size size of data to transfer
+    /// @brief Convenience method for start() that sets the operation.
     /// @param op operation flags such as READ or WRITE
     /// @return true if successful, false on error
-    bool start(int size, Op op) {
-        size_ = std::clamp(size, 0, int(capacity_));
-        return start(op);
+    bool start(Op op) {
+        op_ = op;
+        return start();
     }
 
-    /// @brief Convenience method for start() that sets the current buffer size
-    /// @param end end iterator pointing behind the end of the data to be transferred in the buffer
+    /// @brief Convenience method for start() that sets the operation and buffer size.
     /// @param op operation flags such as READ or WRITE
+    /// @param size size of data to transfer
     /// @return true if successful, false on error
-    bool start(const uint8_t *end, Op op) {
+    bool start(Op op, int size) {
+        op_ = op;
+        size_ = std::clamp(size, 0, int(capacity_));
+        return start();
+    }
+
+    /// @brief Convenience method for start() using an iterator.
+    /// The buffer size is calculated from the given end iterator which must point into or just behind the buffer.
+    /// @param op operation flags such as READ or WRITE
+    /// @param end end iterator pointing behind the end of the data to be transferred in the buffer
+    /// @return true if successful, false on error
+    bool start(Op op, const uint8_t *end) {
+        op_ = op;
         int size = end - data_;
         size_ = std::clamp(size, 0, int(capacity_));
-        return start(op);
+        return start();
     }
 
-    /// @brief Convenience function for receiving data of size up to capacity(), e.g. radio, UART or USB bulk
-    /// @param op additional operation flag
-    /// @return use co_await on return value to await completion of receive operation
-    [[nodiscard]] Awaitable<Events> read(Op op = Op::NONE) {
+    /// @brief Convenience function for receiving data of size up to capacity().
+    /// Useful e.g. for UART, USB bulk, radio.
+    /// @param op Additional operation flag
+    /// @return Use co_await on return value to await completion of receive operation or device being disabled
+    [[nodiscard]] Awaitable<Events> read() {
         size_ = capacity_;
-        start(Op(int(Op::READ) | int(op)));
+        op_ = Op::READ;
+        start();
         return untilReadyOrDisabled();
     }
 
-    bool startRead(Op op = Op::NONE) {
+    bool startRead() {
         size_ = capacity_;
-        return start(Op(int(Op::READ) | int(op)));
+        op_ = Op::READ;
+        return start();
     }
 
-    /// @brief Convenience function for initiating a read operation of given size e.g. from file, I2C or USB control
+    /// @brief Convenience function for initiating a read operation of given size.
+    /// Useful e.g. for SPI, I2C, USB control, file.
     /// @param size size to read
-    /// @param op additional operation flag
     /// @return use co_await on return value to await completion of read operation
-    [[nodiscard]] Awaitable<Events> read(int size, Op op = Op::NONE) {
-        start(size, Op(int(Op::READ) | int(op)));
+    [[nodiscard]] Awaitable<Events> read(int size) {
+        start(Op::READ, size);
         return untilReadyOrDisabled();
     }
 
-    bool startRead(int size, Op op = Op::NONE) {
-        return start(size, Op(int(Op::READ) | int(op)));
+    bool startRead(int size) {
+        return start(Op::READ, size);
     }
+
+
+    /// @brief Convenience function for writing data of current size.
+    /// @return use co_await on return value to await completion of write operation
+    [[nodiscard]] Awaitable<Events> write() {
+        start(Op::WRITE);
+        return untilReadyOrDisabled();
+    }
+
+    bool startWrite() {
+        return start(Op::WRITE);
+    }
+
+    /// @brief Convenience function for writing data.
+    /// @param size size of data to write
+    /// @return use co_await on return value to await completion of write operation
+    [[nodiscard]] Awaitable<Events> write(int size) {
+        start(Op::WRITE, size);
+        return untilReadyOrDisabled();
+    }
+
+    bool startWrite(int size) {
+        return start(Op::WRITE, size);
+    }
+
+    /// @brief Convenience function for writing data using an iterator.
+    /// The buffer size is calculated from the given end iterator which must point into or just behind the buffer.
+    /// Also works with BufferWriter, e.g. BufferWriter w(buffer); w.u8(10); buffer.write(w);
+    /// @param end end pointer of data to write
+    /// @return use co_await on return value to await completion of write operation
+    [[nodiscard]] Awaitable<Events> write(const uint8_t *end) {
+        start(Op::WRITE, end);
+        return untilReadyOrDisabled();
+    }
+
+    bool startWrite(const uint8_t *end) {
+        return start(Op::WRITE, end);
+    }
+
+
+    /// @brief Convenience function for writing data of current size and receiving a reply.
+    /// @return use co_await on return value to await completion of write operation
+    [[nodiscard]] Awaitable<Events> writeRead() {
+        start(Op::READ_WRITE);
+        return untilReadyOrDisabled();
+    }
+
+    bool startWriteRead() {
+        return start(Op::READ_WRITE);
+    }
+
+    /// @brief Convenience function for writing data and receiving a reply.
+    /// @param size size of data to write
+    /// @return use co_await on return value to await completion of write operation
+    [[nodiscard]] Awaitable<Events> writeRead(int size) {
+        start(Op::READ_WRITE, size);
+        return untilReadyOrDisabled();
+    }
+
+    bool startWriteRead(int size) {
+        return start(Op::READ_WRITE, size);
+    }
+
+    /// @brief Convenience function for writing data using an iterator and receiving a reply.
+    /// The buffer size is calculated from the given end iterator which must point into or just behind the buffer.
+    /// Also works with BufferWriter, e.g. BufferWriter w(buffer); w.u8(10); buffer.write(w);
+    /// @param end end pointer of data to write
+    /// @return use co_await on return value to await completion of write operation
+    [[nodiscard]] Awaitable<Events> writeRead(const uint8_t *end) {
+        start(Op::READ_WRITE, end);
+        return untilReadyOrDisabled();
+    }
+
+    bool startWriteRead(const uint8_t *end) {
+        return start(Op::WRITE, end);
+    }
+
+
 
     /// @brief Convenience function for reading data
     /// @param data data to read
@@ -519,44 +632,6 @@ public:
         std::copy(src, end, dst);
     }
 
-
-    /// @brief Convenience function for writing the whole buffer
-    /// @param op additional operation flag
-    /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> write(Op op = Op::NONE) {
-        start(Op(int(Op::WRITE) | int(op)));
-        return untilReadyOrDisabled();
-    }
-
-    bool startWrite(Op op = Op::NONE) {
-        return start(Op(int(Op::WRITE) | int(op)));
-    }
-
-    /// @brief Convenience function for writing data
-    /// @param size size of data to write
-    /// @param op additional operation flag
-    /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> write(int size, Op op = Op::NONE) {
-        start(size, Op(int(Op::WRITE) | int(op)));
-        return untilReadyOrDisabled();
-    }
-
-    bool startWrite(int size, Op op = Op::NONE) {
-        return start(size, Op(int(Op::WRITE) | int(op)));
-    }
-
-    /// @brief Convenience function for writing data when using BufferWriter, e.g. BufferWriter w(buffer); w.u8(10); buffer.write(w);
-    /// @param end end pointer of data to write
-    /// @param op additional operation flag
-    /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> write(const uint8_t *end, Op op = Op::NONE) {
-        start(end, Op(int(Op::WRITE) | int(op)));
-        return untilReadyOrDisabled();
-    }
-
-    bool startWrite(const uint8_t *end, Op op = Op::NONE) {
-        return start(end, Op(int(Op::WRITE) | int(op)));
-    }
 
     /// @brief Convenience function for writing a value
     /// @tparam T value type
@@ -694,16 +769,69 @@ public:
         return untilReadyOrDisabled();
     }
 
-    /// @brief Result of the last transfer operation
-    ///
-    Result result() {return result_;}
+
+// error
+// -----
+
+    /// @brief Get the error code of the last operation.
+    /// Check for success: if (!buffer.error()) ...
+    /// Check if cancelled: buffer.error() == std::errc::operation_canceled
+    /// @return Error code
+    std::error_code error() {
+#ifdef NATIVE
+        // native platforms (Windows, Linux, macOS) use full std::error_code
+        return error_;
+#else
+        // embedded platforms directly use std::errc stored in an uint8_t
+        return std::error_code(error_, std::generic_category());
+#endif
+    }
+
 
 protected:
+    /// @brief Set success and number of transferred bytes.
+    /// @param transferred
+    void setSuccess(int transferred) {
+        size_ = transferred;
+        error_ = {};
+    }
+
+    /// @brief Set generic error using std::errc.
+    /// @param error Error
+    void setError(std::errc error) {
+        size_ = 0;
+#ifdef NATIVE
+        error_ = std::make_error_code(error);
+#else
+        error_ = uint8_t(error);
+#endif
+    }
+
+#ifdef NATIVE
+    /// @brief Set system error originating from errno or GetLastError()/WSAGetLastError().
+    /// @param error System error
+    void setSystemError(int error) {
+        size_ = 0;
+        error_ = {error, std::system_category()};
+    }
+#endif
+
     void setDisabled();
     void setReady();
-    void setReady(int transferred);
-    //void setReady(Device::State state, int transferred)
+    //void setReady(int transferred);
     void setBusy();
+
+    /// @brief Notify waiting coroutines about the given events.
+    /// @param events Event flags to notify
+    /// @return *this
+    auto &notify(Events events) {
+        // resume all coroutines waiting for the given event
+        tasks_.doAll([events](Events e) {
+            return (int(events) & int(e)) != 0;
+        });
+        return *this;
+    }
+
 
     // buffer data
     uint8_t *data_;
@@ -715,19 +843,32 @@ protected:
     uint32_t capacity_;
 
     // size of buffer (without header)
-    uint32_t size_;
+    uint32_t size_ = 0;
 
     // capacity of header
-    uint16_t headerCapacity_;
+    uint8_t headerCapacity_;
 
     // device specific header type or size
-    uint8_t headerType_;
+    //uint8_t headerType_;
+
+    // current state of the buffer
+    State state_;
+
+    // operation
+    Op op_ = Op::NONE;
 
     // result of last transfer operation
-    Result result_;
+    union {
+#ifdef NATIVE
+        std::error_code error_;
+#else
+        uint8_t error_ = 0;
+#endif
+        Op op2_;
+    };
 
-    // state and tasks (waiting coroutines)
-    StateTasks<State, Events> st;
+    // tasks (waiting coroutines)
+    CoroutineTaskList<Events> tasks_;
 };
 COCO_ENUM(Buffer::Events);
 COCO_ENUM(Buffer::Op);

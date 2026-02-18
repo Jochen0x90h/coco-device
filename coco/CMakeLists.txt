@@ -10,7 +10,7 @@ target_sources(${PROJECT_NAME}
 		DataBuffer.hpp
 		Device.hpp
 		InputDevice.hpp
-		StateTasks.hpp
+		#StateTasks.hpp
 	PRIVATE
 		Buffer.cpp
 		#BufferImpl.cpp

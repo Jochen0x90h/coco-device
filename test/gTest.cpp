@@ -29,12 +29,12 @@ public:
     TestBuffer(uint8_t *data, int size)
         : Buffer(data, size, State::READY) {}
     TestBuffer(uint8_t *header, int headerSize, uint8_t *data, int size)
-        : Buffer(header, headerSize, 0, data, size, State::READY) {}
+        : Buffer(header, headerSize, data, size, State::READY) {}
 
     ~TestBuffer() override {
     }
 
-    bool start(Op op) override {
+    bool start() override {
         return true;
     }
 
@@ -211,6 +211,14 @@ TEST(cocoTest, readWriteData) {
     EXPECT_EQ(data3[2], 32);
 }
 
+TEST(cocoTest, error) {
+    uint8_t buffer[2];
+    TestBuffer b(buffer, 2);
+
+    auto error = b.error();
+    EXPECT_TRUE(!error);
+    EXPECT_FALSE(error == std::errc::operation_canceled);
+}
 
 TEST(cocoTest, BufferReader) {
     uint8_t buffer[128] = {50, 0x37, 0x13, 0x13, 0x37};

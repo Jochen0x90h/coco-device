@@ -219,7 +219,7 @@ public:
 
 // array of fixed size integer
 
-    /// @brief Read a byte array of fixed length (e.g. data8<10>()).
+    /// @brief Read a byte array of fixed length (e.g. array8<10>()).
     /// @tparam N Fixed length of the array
     /// @return array
     template <int N>

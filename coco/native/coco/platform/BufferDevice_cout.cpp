@@ -36,7 +36,7 @@ void BufferDevice_cout::handle() {
         //if ((op & Buffer::Op::COMMAND) != 0)
         //	std::cout << "command ";
         if (headerCapacity > 0)
-            std::cout << "header " << headerCapacity << " (" << int(buffer->headerType_) << ") ";
+            std::cout << "header " << headerCapacity; // << " (" << int(buffer->headerType_) << ") ";
         if ((op & Buffer::Op::READ) != 0)
             std::cout << "read ";
         if ((op & Buffer::Op::WRITE) != 0)
@@ -73,17 +73,12 @@ BufferDevice_cout::Buffer::~Buffer() {
     delete [] header_;
 }
 
-bool BufferDevice_cout::Buffer::start(Op op) {
-    if (st.state != State::READY) {
+bool BufferDevice_cout::Buffer::start() {
+    if (state_ != State::READY || (op_ & Op::READ_WRITE) == 0 || size_ == 0) {
         // staring a buffer that is busy is considered a bug
-        assert(st.state != State::BUSY);
+        assert(state_ != State::BUSY);
         return false;
     }
-
-    // check if READ or WRITE flag is set
-    assert((op & Op::READ_WRITE) != 0);
-
-    op = op;
 
     // add buffer to list of transfers and let event loop call I2cMaster_cout::handle() when the first was added
     if (device_.transfers_.push(*this))
@@ -96,13 +91,14 @@ bool BufferDevice_cout::Buffer::start(Op op) {
 }
 
 bool BufferDevice_cout::Buffer::cancel() {
-    if (st.state != State::BUSY)
+    if (state_ != State::BUSY)
         return false;
 
     // small transfers can be cancelled immediately, otherwise cancel has no effect (this is arbitrary and only for testing)
     if (size_ < 4) {
         device_.transfers_.remove(*this);
-        setReady(0);
+        setError(std::errc::operation_canceled);
+        setReady();
     }
     return true;
 }
