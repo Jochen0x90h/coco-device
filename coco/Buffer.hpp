@@ -89,16 +89,12 @@ public:
         ///
         ERASE = 1 << 2,
 
-        CANCEL = 1 << 3,
+        //CANCEL = 1 << 3,
 
         /// Partial transfer, i.e. at least one more transfer will follow. If the underlying transport
         /// protocol is packetized, only full packets may be written (e.g. 64 bytes for USB bulk) and no "end packet" is
         /// generated.
         PARTIAL = 1 << 4,
-
-        /// Whole transfer is a commmand, e.g. for SPI with command/data line
-        ///
-        //COMMAND = 1 << 5
     };
 
     /// @brief Result of operation.
@@ -789,6 +785,12 @@ public:
 
 
 protected:
+    /// @brief Set success and keep buffer size.
+    /// @param transferred
+    void setSuccess() {
+        error_ = {};
+    }
+
     /// @brief Set success and number of transferred bytes.
     /// @param transferred
     void setSuccess(int transferred) {
@@ -857,15 +859,21 @@ protected:
     // operation
     Op op_ = Op::NONE;
 
-    // result of last transfer operation
-    union {
 #ifdef NATIVE
-        std::error_code error_;
+    // general purpose flags (fit into the alignment space after op_)
+    uint8_t flags_;
+
+    // result of last transfer operation
+    std::error_code error_;
 #else
-        uint8_t error_ = 0;
-#endif
-        Op op2_;
+    union {
+        // result of last transfer operation
+        uint8_t error_;
+
+        // general purpose flags (share space with error_)
+        uint8_t flags_;
     };
+#endif
 
     // tasks (waiting coroutines)
     CoroutineTaskList<Events> tasks_;

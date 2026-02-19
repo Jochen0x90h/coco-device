@@ -223,6 +223,9 @@ protected:
     // current state of the buffer
     State state_;
 
+    // general purpose flags (fit into the alignment space after state_)
+    uint8_t flags;
+
     // result of last transfer operation
 #ifdef NATIVE
     std::error_code error_;
