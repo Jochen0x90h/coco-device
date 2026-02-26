@@ -461,6 +461,10 @@ public:
 // transfer
 // --------
 
+    /// @brief Get the currently set operation
+    /// @return Current operation
+    Op op() {return op_;}
+
     /// @brief Start transfer of the buffer if it is in READY state and set it to BUSY state if the operation does not
     /// complete immediately. If the buffer completes immediately, it stays in READY state. Depending on the underlying
     /// device and transfer direction, either the whole buffer gets transferred or only the current size.
@@ -860,8 +864,8 @@ protected:
     Op op_ = Op::NONE;
 
 #ifdef NATIVE
-    // general purpose flags (fit into the alignment space after op_)
-    uint8_t flags_;
+    // outstanding steps necessary for the current transfer (fit into the alignment space after op_)
+    uint8_t steps_;
 
     // result of last transfer operation
     std::error_code error_;
@@ -870,8 +874,8 @@ protected:
         // result of last transfer operation
         uint8_t error_;
 
-        // general purpose flags (share space with error_)
-        uint8_t flags_;
+        // outstanding steps necessary for the current transfer (share space with error_)
+        uint8_t steps_;
     };
 #endif
 

@@ -27,7 +27,7 @@ class Project(ConanFile):
         self.requires("coco-loop/linux", options={"platform": self.options.platform})
 
     def build_requirements(self):
-        self.tool_requires("coco-toolchain/0.4.0", options={"platform": self.options.platform})
+        self.tool_requires("coco-toolchain/linux", options={"platform": self.options.platform})
         if not self.cross():
             # platform is based on a "normal" operating system such as Windows, MacOS, Linux
             self.test_requires("gtest/1.17.0")
