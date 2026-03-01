@@ -97,23 +97,6 @@ public:
         PARTIAL = 1 << 4,
     };
 
-    /// @brief Result of operation.
-    /*enum class Result : uint8_t {
-        /// Operation completed successfully
-        ///
-        SUCCESS = 0,
-
-        /// @brief Operation failed because device is busy, try again later
-        BUSY = 1,
-
-        /// @brief An error occurred (e.g. invalid parity or checksum)
-        ///
-        FAIL = 2,
-
-        /// @brief An expected acknowledge was not received (e.g. unused i2c address or timeout waiting for acknowledge)
-        ///
-        NO_REPLY = 3,
-    };*/
 
     /// @brief Constructor
     /// @param buffer data
@@ -131,35 +114,13 @@ public:
         , headerCapacity_(headerCapacity), state_(state), error_{} {}
 
     Buffer(uint8_t *data, int capacity, Device::State state)
-        : Buffer(data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
+        : Buffer(data, capacity, state == Device::State::READY ? State::READY : State::DISABLED) {}
 
     Buffer(uint8_t *headerAndData, int headerCapacity, int capacity, Device::State state)
-        : Buffer(headerAndData, headerCapacity, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
+        : Buffer(headerAndData, headerCapacity, capacity, state == Device::State::READY ? State::READY : State::DISABLED) {}
 
     Buffer(void *header, int headerCapacity, uint8_t *data, int capacity, Device::State state)
-        : Buffer(header, headerCapacity, data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
-
-    /*Buffer(uint8_t *data, int capacity, State state)
-        : data_(data), header_(), capacity_(capacity), size_(), headerCapacity_(), headerType_()
-        , result_(Result::SUCCESS), st(state) {}
-
-    Buffer(uint8_t *headerAndData, int headerCapacity, int type, int capacity, State state)
-        : data_(headerAndData + headerCapacity), header_(headerAndData), capacity_(capacity), size_()
-        , headerCapacity_(headerCapacity), headerType_(type), result_(Result::SUCCESS), st(state) {}
-
-    Buffer(void *header, int headerCapacity, int type, uint8_t *data, int capacity, State state)
-        : data_(data), header_((uint8_t *)header), capacity_(capacity), size_()
-        , headerCapacity_(headerCapacity), headerType_(type), result_(Result::SUCCESS), st(state) {}
-
-    Buffer(uint8_t *data, int capacity, Device::State state)
-        : Buffer(data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
-
-    Buffer(uint8_t *headerAndData, int headerCapacity, int type, int capacity, Device::State state)
-        : Buffer(headerAndData, headerCapacity, type, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
-
-    Buffer(void *header, int headerCapacity, int type, uint8_t *data, int capacity, Device::State state)
-        : Buffer(header, headerCapacity, type, data, capacity, state <= Device::State::CLOSING ? State::DISABLED : State::READY) {}
-*/
+        : Buffer(header, headerCapacity, data, capacity, state == Device::State::READY ? State::READY : State::DISABLED) {}
 
     /// @brief Destructor. Do not destroy a buffer that is in BUSY state.
     ///
@@ -610,7 +571,7 @@ public:
 
 
 
-    /// @brief Convenience function for reading data
+    /// @brief Convenience function for reading data.
     /// @param data data to read
     /// @param size size of data to read
     /// @param op additional operation flag
@@ -633,7 +594,7 @@ public:
     }
 
 
-    /// @brief Convenience function for writing a value
+    /// @brief Convenience function for writing a value.
     /// @tparam T value type
     /// @param value value to write
     /// @param op additional operation flag
@@ -651,7 +612,7 @@ public:
         return untilReadyOrDisabled();
     }
 
-    /// @brief Convenience function for writing data
+    /// @brief Convenience function for writing data.
     /// @param data data to write
     /// @param size size of data to write
     /// @param op additional operation flag
@@ -725,7 +686,7 @@ public:
         return start(Op(int(Op::WRITE) | int(op)));
     }
 
-    /// @brief Convenience function for writing a string
+    /// @brief Convenience function for writing a string.
     /// @param str string to write
     /// @param op additional operation flag
     /// @return use co_await on return value to await completion of write operation
@@ -733,7 +694,7 @@ public:
         return writeData(str.data(), str.size(), op);
     }
 
-    /// @brief Generic write function for arrays implementing ArrayConcept but not StringConcept
+    /// @brief Generic write function for arrays implementing ArrayConcept but not StringConcept.
     /// @param array array to write
     /// @param op optional additional operation
     template <typename T> requires (ArrayConcept<T> && !StringConcept<T>)
@@ -741,7 +702,7 @@ public:
         return writeArray(array, op);
     }
 
-    /// @brief Generic write function for strings implementing StringConcept
+    /// @brief Generic write function for strings implementing StringConcept.
     /// @param str string to write
     /// @param op optional additional operation
     template <typename T> requires (StringConcept<T>)
@@ -749,20 +710,21 @@ public:
         return writeString(str, op);
     }
 
-    /// @brief Convenience function for sending an erase command e.g. to an SPI or I2C flash memory
+    /// @brief Convenience function for sending an erase command e.g. to an SPI or I2C flash memory.
     ///
     [[nodiscard]] Awaitable<Events> erase() {
         start(Op::ERASE);
         return untilReadyOrDisabled();
     }
 
-    /// @brief Cancel the current transfer operation which means the buffer returns from BUSY to READY after a short amount of
-    /// time. When the transfer got cancelled, size() returns zero. If the transfer complete successfully, size() is as
-    /// if cancel() was not called.
-    /// @return true if a transfer was cancelled
+    /// @brief Try to cancel the current transfer operation.
+    /// This means the buffer returns from BUSY to READY after a short amount of time.
+    /// When the transfer got cancelled, size() returns zero and error() is std::errc::operation_canceled.
+    /// If the transfer completes successfully, size() is as if cancel() was not called and error() returns success.
+    /// @return true if cancel is attempted, false if not in BUSY state or previous cancel() in progress.
     virtual bool cancel() = 0;
 
-    /// @brief Convenience function for acquiring a buffer, i.e. cancel if necessary and wait until ready
+    /// @brief Convenience function for acquiring a buffer, i.e. cancel and wait until ready or disabled.
     ///
     [[nodiscard]] Awaitable<Events> acquire() {
         cancel();
@@ -822,9 +784,13 @@ protected:
     }
 #endif
 
+    // set size to 0 and state to DISABLED
     void setDisabled();
+
+    // set state to READY
     void setReady();
-    //void setReady(int transferred);
+
+    // set state to BUSY
     void setBusy();
 
     /// @brief Notify waiting coroutines about the given events.
