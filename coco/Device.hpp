@@ -224,7 +224,7 @@ protected:
     State state_;
 
     // general purpose flags (fit into the alignment space after state_)
-    uint8_t flags;
+    uint8_t flags_;
 
     // result of last transfer operation
 #ifdef NATIVE

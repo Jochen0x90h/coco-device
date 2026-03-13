@@ -2,8 +2,10 @@
 
 #include "Device.hpp"
 #include <coco/Array.hpp>
+#include <coco/ByteConcept.hpp>
 #include <coco/Coroutine.hpp>
 #include <coco/enum.hpp>
+#include <coco/RangeConcept.hpp>
 #include <coco/String.hpp>
 #include <coco/StringConcept.hpp>
 #include <system_error>
@@ -327,13 +329,28 @@ public:
 // data
 // ----
 
-    /// @brief Check if the buffer is empty
+    /// @brief Get the capacity of the buffer.
+    /// @return Buffer capacity
+    int capacity() const {return capacity_;}
+
+    /// @brief Check if the buffer is empty.
     /// @return true when empty
     bool empty() const {return size_ == 0;}
 
-    /// @brief Get the current size of the buffer
+    /// @brief Get the current size of the buffer.
     /// @return size
     int size() const {return size_;}
+
+    /// @brief Return the size of the remaining space in the buffer.
+    /// @return Remaining space
+    int remaining() const {return capacity_ - size_;}
+
+    /// @brief Clear the buffer (equivalent to resize(0)).
+    /// @return *this
+    auto &clear() {
+        size_ = 0;
+        return *this;
+    }
 
     /// @brief Set the current size of the buffer
     /// @param size size of buffer, gets clamped to the capacity minus the header size
@@ -341,16 +358,6 @@ public:
         assert(unsigned(size) <= capacity_);
         size_ = std::clamp(size, 0, int(capacity_));
     }
-
-    /// @brief Clear the buffer (equivalent to resize(0))
-    ///
-    void clear() {
-        size_ = 0;
-    }
-
-    /// @brief Get the capacity of the buffer
-    /// @return size
-    int capacity() const {return capacity_;}
 
     /// @brief Index operator
     /// @param index index between (-header capacity) and (buffer capacity - 1)
@@ -380,7 +387,9 @@ public:
     uint8_t *end() {return data_ + size_;}
     const uint8_t *end() const {return data_ + size_;}
 
-    /// @brief Get the data of the buffer as a value of given type
+/*
+    /// @brief Get the data of the buffer as a value of given type.
+    ///
     /// @tparam T value type
     template <typename T>
     T &value() {
@@ -405,18 +414,134 @@ public:
         auto size = size_;
         return {reinterpret_cast<T *>(data), int(size / int(sizeof(T)))};
     }
+*/
+    /// @brief Get the current data of the buffer as an array of given byte type.
+    /// @tparam T array element type
+    /// @returns Array of given type referencing the buffer memory
+    template <typename T> requires ByteConcept<T>
+    Array<T> array() {
+        return {reinterpret_cast<T *>(data_), int(size_)};
+    }
 
     /// @brief Get the current data of the buffer as a string
-    ///
+    /// @returns String referencing the buffer memory
     String string() {
-        auto data = data_;
-        auto size = size_;
-        return String(data, size);
+        return String(data_, size_);
     }
 
     /// @brief Get whole buffer as array
     ///
     Array<uint8_t> all() {return {data_, int(capacity_)};}
+
+
+    /// @brief Assign a byte
+    /// @tparam T
+    /// @param value
+    /// @return
+    template <typename T> requires ByteConcept<T>
+    auto &assign(T value) {
+        size_ = 1;
+        data_[0] = value;
+
+        return *this;
+    }
+
+    /// @brief Assign data given by an iterator and size.
+    /// @tparam I
+    /// @param src
+    /// @param size
+    /// @return
+    template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
+    auto &assign(I src, int size) {
+        size = std::clamp(size, 0, int(capacity_));
+        size_ = size;
+
+        // copy data
+        std::ranges::copy_n(src, size, data_);
+
+        return *this;
+    }
+
+    /// @brief Assign a C-string.
+    /// @tparam T
+    /// @param str
+    /// @return
+    template <typename T> requires CStringConcept<T>
+    auto &assign(const T &str) {
+        auto size = std::min(uint32_t(length(str)), capacity_);
+        size_ = size;
+
+        // copy data
+        const char *src = str;
+        std::ranges::copy_n(src, size, data_);
+
+        return *this;
+    }
+
+    /// @brief Assign a range supporting std::begin() and std::end().
+    /// @tparam T
+    /// @param range
+    /// @return
+    template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
+    auto &assign(const T &range) {
+        auto size = std::min(uint32_t(std::ranges::size(range)), capacity_);
+        size_ = size;
+
+        // copy data
+        auto src = std::ranges::begin(range);
+        std::ranges::copy_n(src, size, data_);
+
+        return *this;
+    }
+
+    template <typename T> requires ByteConcept<T>
+    auto &append(T value) {
+        int oldSize = size_;
+        if (oldSize < capacity_) {
+            data_[oldSize] = value;
+            size_ = oldSize + 1;
+        }
+
+        return *this;
+    }
+
+    template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
+    auto &append(I src, int size) {
+        int oldSize = size_;
+        size = std::clamp(size, 0, int(capacity_ - oldSize));
+        size_ = oldSize + size;
+
+        // copy data
+        std::ranges::copy_n(src, size, data_ + oldSize);
+
+        return *this;
+    }
+
+    template <typename T> requires CStringConcept<T>
+    auto &append(const T &str) {
+        uint32_t oldSize = size_;
+        auto size = std::min(uint32_t(length(str)), capacity_ - oldSize);
+        size_ = oldSize + size;
+
+        // copy data
+        const char *src = str;
+        std::ranges::copy_n(src, size, data_ + oldSize);
+
+        return *this;
+    }
+
+    template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
+    auto &append(const T &range) {
+        uint32_t oldSize = size_;
+        auto size = std::min(uint32_t(std::ranges::size(range)), capacity_ - oldSize);
+        size_ = oldSize + size;
+
+        // copy data
+        auto src = std::ranges::begin(range);
+        std::ranges::copy_n(src, size, data_ + oldSize);
+
+        return *this;
+    }
 
 
 // transfer
@@ -456,10 +581,16 @@ public:
     /// @param op operation flags such as READ or WRITE
     /// @param end end iterator pointing behind the end of the data to be transferred in the buffer
     /// @return true if successful, false on error
-    bool start(Op op, const uint8_t *end) {
+    /*bool startEnd(Op op, const uint8_t *end) {
         op_ = op;
         int size = end - data_;
         size_ = std::clamp(size, 0, int(capacity_));
+        return start();
+    }*/
+
+    bool startRead() {
+        size_ = capacity_;
+        op_ = Op::READ;
         return start();
     }
 
@@ -474,10 +605,8 @@ public:
         return untilReadyOrDisabled();
     }
 
-    bool startRead() {
-        size_ = capacity_;
-        op_ = Op::READ;
-        return start();
+    bool startRead(int size) {
+        return start(Op::READ, size);
     }
 
     /// @brief Convenience function for initiating a read operation of given size.
@@ -489,10 +618,9 @@ public:
         return untilReadyOrDisabled();
     }
 
-    bool startRead(int size) {
-        return start(Op::READ, size);
+    bool startWrite() {
+        return start(Op::WRITE);
     }
-
 
     /// @brief Convenience function for writing data of current size.
     /// @return use co_await on return value to await completion of write operation
@@ -501,8 +629,8 @@ public:
         return untilReadyOrDisabled();
     }
 
-    bool startWrite() {
-        return start(Op::WRITE);
+    bool startWrite(int size) {
+        return start(Op::WRITE, size);
     }
 
     /// @brief Convenience function for writing data.
@@ -513,8 +641,8 @@ public:
         return untilReadyOrDisabled();
     }
 
-    bool startWrite(int size) {
-        return start(Op::WRITE, size);
+    /*bool startWriteEnd(const uint8_t *end) {
+        return startEnd(Op::WRITE, end);
     }
 
     /// @brief Convenience function for writing data using an iterator.
@@ -522,15 +650,14 @@ public:
     /// Also works with BufferWriter, e.g. BufferWriter w(buffer); w.u8(10); buffer.write(w);
     /// @param end end pointer of data to write
     /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> write(const uint8_t *end) {
-        start(Op::WRITE, end);
+    [[nodiscard]] Awaitable<Events> writeEnd(const uint8_t *end) {
+        startEnd(Op::WRITE, end);
         return untilReadyOrDisabled();
-    }
+    }*/
 
-    bool startWrite(const uint8_t *end) {
-        return start(Op::WRITE, end);
+    bool startWriteRead() {
+        return start(Op::READ_WRITE);
     }
-
 
     /// @brief Convenience function for writing data of current size and receiving a reply.
     /// @return use co_await on return value to await completion of write operation
@@ -539,8 +666,8 @@ public:
         return untilReadyOrDisabled();
     }
 
-    bool startWriteRead() {
-        return start(Op::READ_WRITE);
+    bool startWriteRead(int size) {
+        return start(Op::READ_WRITE, size);
     }
 
     /// @brief Convenience function for writing data and receiving a reply.
@@ -551,11 +678,10 @@ public:
         return untilReadyOrDisabled();
     }
 
-    bool startWriteRead(int size) {
-        return start(Op::READ_WRITE, size);
+    /*bool startWriteRead(const uint8_t *end) {
+        return start(Op::WRITE, end);
     }
-
-    /// @brief Convenience function for writing data using an iterator and receiving a reply.
+        /// @brief Convenience function for writing data using an iterator and receiving a reply.
     /// The buffer size is calculated from the given end iterator which must point into or just behind the buffer.
     /// Also works with BufferWriter, e.g. BufferWriter w(buffer); w.u8(10); buffer.write(w);
     /// @param end end pointer of data to write
@@ -564,13 +690,54 @@ public:
         start(Op::READ_WRITE, end);
         return untilReadyOrDisabled();
     }
+*/
 
-    bool startWriteRead(const uint8_t *end) {
-        return start(Op::WRITE, end);
+
+    template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
+    bool startWrite(I src, int size, Op op = Op::NONE) {
+        assign(src, size);
+        return start(Op(int(Op::WRITE) | int(op)));
     }
 
+    template <typename T> requires CStringConcept<T>
+    bool startWrite(const T &str, Op op = Op::NONE) {
+        assign(str);
+        return start(Op(int(Op::WRITE) | int(op)));
+    }
 
+    template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
+    bool startWrite(const T &range, Op op = Op::NONE) {
+        assign(range);
+        return start(Op(int(Op::WRITE) | int(op)));
+    }
 
+    /// @brief Convenience function for writing data.
+    /// @param data data to write
+    /// @param size size of data to write
+    /// @param op additional operation flag
+    /// @return use co_await on return value to await completion of write operation
+    template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
+    [[nodiscard]] Awaitable<Events> write(I src, int size, Op op = Op::NONE) {
+        assign(src, size);
+        start(Op(int(Op::WRITE) | int(op)));
+        return untilReadyOrDisabled();
+    }
+
+    template <typename T> requires CStringConcept<T>
+    [[nodiscard]] Awaitable<Events> write(const T &str, Op op = Op::NONE) {
+        assign(str);
+        start(Op(int(Op::WRITE) | int(op)));
+        return untilReadyOrDisabled();
+    }
+
+    template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
+    [[nodiscard]] Awaitable<Events> write(const T &range, Op op = Op::NONE) {
+        assign(range);
+        start(Op(int(Op::WRITE) | int(op)));
+        return untilReadyOrDisabled();
+    }
+
+/*
     /// @brief Convenience function for reading data.
     /// @param data data to read
     /// @param size size of data to read
@@ -644,23 +811,6 @@ public:
     template <typename T> requires (ArrayConcept<T>)
     [[nodiscard]] Awaitable<Events> writeArray(const T &array, Op op = Op::NONE) {
         startWriteArray(array, op);
-        /*auto src = std::data(array);
-        auto count = std::size(array);
-        unsigned size = p.headerSize + count * sizeof(*src);
-
-        // cast buffer data to array element type
-        auto data = data_ + p.headerSize;
-        auto dst = reinterpret_cast<std::add_pointer_t<std::remove_const_t<std::remove_reference_t<decltype(*src)>>>>(data);
-
-        if (size <= capacity_) {
-            size_ = size;
-            auto end = src + count;
-            std::copy(src, end, dst);
-            start(Op(int(Op::WRITE) | int(op)));
-        } else {
-            // error: size of data too large or negative
-            assert(false);
-        }*/
         return untilReadyOrDisabled();
     }
 
@@ -709,6 +859,7 @@ public:
     [[nodiscard]] Awaitable<Events> write(const T &str, Op op = Op::NONE) {
         return writeString(str, op);
     }
+*/
 
     /// @brief Convenience function for sending an erase command e.g. to an SPI or I2C flash memory.
     ///

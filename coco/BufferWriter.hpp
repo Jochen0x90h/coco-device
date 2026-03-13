@@ -3,6 +3,7 @@
 #include "Buffer.hpp"
 #include "DataBuffer.hpp"
 #include <coco/Array.hpp>
+#include <coco/bits.hpp>
 #include <coco/String.hpp>
 #include <coco/StringBuffer.hpp>
 #include <cstdint>
@@ -11,98 +12,52 @@
 namespace coco {
 
 /// @brief Helper class for writing data into a buffer
-///
-/// Note that there is no overflow checking. Make sure that there is enough space left before writing data
-class BufferWriter {
+/// @tparam B Buffer reference type, e.g. Buffer &
+template <typename B>
+class DataWriter {
 public:
-    BufferWriter() : current(), end() {}
-
-    /// @brief Constructor
-    /// @param begin Begin of data to write to
-    /// @param end End of data to write to
-    BufferWriter(uint8_t *buffer, uint8_t *end) : current(buffer), end(end) {}
-    BufferWriter(char *buffer, char *end) : current((uint8_t *)buffer), end((uint8_t *)end) {}
-
-    /// @brief Constructor
-    /// @param data Data to write to
-    /// @param length Length of data to write to
-    BufferWriter(uint8_t *buffer, int length) : current(buffer), end(buffer + length) {}
-    BufferWriter(char *buffer, int length) : current((uint8_t *)buffer), end((uint8_t *)(buffer + length)) {}
-
-    /// @brief Constructor for buffer supporting std::data() and std::size()
-    /// @tparam T Buffer type
-    /// @param buffer Buffer to write to
-    template <typename T>
-    BufferWriter(T &buffer) : current(std::data(buffer)), end(std::data(buffer) + std::size(buffer)) {}
-    template <typename T>
-    BufferWriter(T &&buffer) : current(std::data(buffer)), end(std::data(buffer) + std::size(buffer)) {}
-
-    /// @brief Set the writer to the given write position without changing end position
-    /// @param current current write position
-    void set(uint8_t *current) {this->current = current;}
-
-    /// @brief Assign the given buffer to the writer
-    /// @param data Data to write to
-    /// @param length Length of data to write to
-    void assign(uint8_t *data, int length) {
-        this->current = data;
-        this->end = data + length;
-    }
-
-    /// @brief Assign the given buffer supporting std::data() and std::size()
-    /// @tparam T Buffer type
-    /// @param buffer Buffer to write to
-    template <typename T>
-    void assign(T &buffer) {
-        this->current = std::data(buffer);
-        this->end = this->current + std::size(buffer);
-    }
-    template <typename T>
-    void assign(T &&buffer) {
-        this->current = std::data(buffer);
-        this->end = this->current + std::size(buffer);
-    }
-
+    DataWriter(B bufferReference) : b_(bufferReference) {}
 
 // fixed size integer and enum
 
-    void i8(int8_t value) {
-        this->current[0] = value;
-        ++this->current;
+    void u8(uint8_t value) {
+        b_.append(value);
     }
 
-    void u8(uint8_t value) {
-        this->current[0] = value;
-        ++this->current;
+    void i8(int8_t value) {
+        b_.append(value);
     }
 
     template <typename T>
     void e8(T value) {
         static_assert(std::is_same<typename std::underlying_type<T>::type, uint8_t>::value);
-        this->current[0] = uint8_t(value);
-        ++this->current;
-    }
-
-    void i16L(int16_t value) {
-        auto current = this->current;
-        current[0] = value;
-        current[1] = value >> 8;
-        this->current += 2;
-    }
-
-    void i16B(int16_t value) {
-        auto current = this->current;
-        current[0] = value >> 8;
-        current[1] = value;
-        this->current += 2;
+        b_.append(uint8_t(value));
     }
 
     void u16L(uint16_t value) {
-        i16L(value);
+        if constexpr (std::endian::native == std::endian::little) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 2);
+        } else {
+            uint16_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 2);
+        }
     }
 
     void u16B(uint16_t value) {
-        i16B(value);
+        if constexpr (std::endian::native == std::endian::big) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 2);
+        } else {
+            uint16_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 2);
+        }
+    }
+
+    void i16L(int16_t value) {
+        u16L(value);
+    }
+
+    void i16B(int16_t value) {
+        u16B(value);
     }
 
     template <typename T>
@@ -118,47 +73,49 @@ public:
     }
 
     void u24L(uint32_t value) {
-        auto current = this->current;
-        current[0] = value;
-        current[1] = value >> 8;
-        current[2] = value >> 16;
-        this->current += 3;
+        if constexpr (std::endian::native == std::endian::little) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 3);
+        } else {
+            uint32_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 3);
+        }
     }
 
     /// @brief Write a 24 bit integer in big endian format. Useful for writing the address of a SPI/I2C flash.
     /// @param value Value to write
     void u24B(uint32_t value) {
-        auto current = this->current;
-        current[0] = value >> 16;
-        current[1] = value >> 8;
-        current[2] = value;
-        this->current += 3;
-    }
-
-    void i32L(int32_t value) {
-        auto current = this->current;
-        current[0] = value;
-        current[1] = value >> 8;
-        current[2] = value >> 16;
-        current[3] = value >> 24;
-        this->current += 4;
-    }
-
-    void i32B(int32_t value) {
-        auto current = this->current;
-        current[0] = value >> 24;
-        current[1] = value >> 16;
-        current[2] = value >> 8;
-        current[3] = value;
-        this->current += 4;
+        if constexpr (std::endian::native == std::endian::big) {
+            b_.append(reinterpret_cast<uint8_t *>(&value) + 1, 3);
+        } else {
+            uint32_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v) + 1, 3);
+        }
     }
 
     void u32L(uint32_t value) {
-        i32L(value);
+        if constexpr (std::endian::native == std::endian::little) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 4);
+        } else {
+            uint32_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 4);
+        }
     }
 
     void u32B(uint32_t value) {
-        i32B(value);
+        if constexpr (std::endian::native == std::endian::big) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 4);
+        } else {
+            uint32_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 4);
+        }
+    }
+
+    void i32L(int32_t value) {
+        u32L(value);
+    }
+
+    void i32B(int32_t value) {
+        u32B(value);
     }
 
     template <typename T>
@@ -173,26 +130,31 @@ public:
         u32B(uint32_t(value));
     }
 
-    void i64L(int64_t value) {
-        i32L(value);
-        i32L(value >> 32);
-    }
-
-    void i64B(int64_t value) {
-        i32B(value >> 32);
-        i32B(value);
-    }
-
     void u64L(uint64_t value) {
-        i32L(value);
-        i32L(value >> 32);
+        if constexpr (std::endian::native == std::endian::little) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 8);
+        } else {
+            uint64_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 8);
+        }
     }
 
     void u64B(uint64_t value) {
-        i32B(value >> 32);
-        i32B(value);
+        if constexpr (std::endian::native == std::endian::big) {
+            b_.append(reinterpret_cast<uint8_t *>(&value), 8);
+        } else {
+            uint64_t v = byteswap(value);
+            b_.append(reinterpret_cast<uint8_t *>(&v), 8);
+        }
     }
 
+    void i64L(int64_t value) {
+        u64L(value);
+    }
+
+    void i64B(int64_t value) {
+        u64B(value);
+    }
 
 //  variable length integer
 
@@ -203,12 +165,10 @@ public:
     void uVar(T value) {
         auto v = std::make_unsigned_t<T>(value);
         while (v >= 0x80) {
-            *this->current = static_cast<uint8_t>(v | 0x80);
+            b_.append(uint8_t(v | 0x80));
             v >>= 7;
-            ++this->current;
         }
-        *this->current = static_cast<uint8_t>(v);
-        ++this->current;
+        b_.append(uint8_t(v));
     }
 
     /// @brief Variable length unsigned integer as used in Protocol Buffers
@@ -239,7 +199,6 @@ public:
         u64L(v.i);
     }
 
-
 // array of fixed size integer
 
     /// @brief Write the contents of an array supporting std::size() as 8 bit integers
@@ -247,14 +206,9 @@ public:
     /// @param array Array to write
     template <typename T>
     void array8(const T &array) {
-        auto current = this->current;
-        int size = std::size(array);
-        for (int i = 0; i < array.size(); ++i) {
-            uint8_t value = current[0];
-            array[i] = value;;
-            ++current;
+        for (auto &e : array) {
+            u8(uint8_t(e));
         }
-        this->current = current;
     }
 
     /// @brief Write the contents of an array supporting std::size() as little endian 16 bit integers
@@ -262,47 +216,20 @@ public:
     /// @param array Array to write
     template <typename T>
     void array16L(const T &array) {
-        auto current = this->current;
-        int size = std::size(array);
-        for (int i = 0; i < array.size(); ++i) {
-            uint16_t value = uint16_t(array[i]);
-            current[0] = value;
-            current[1] = value >> 8;
-            current += 2;
+        for (auto &e : array) {
+            u16L(uint16_t(e));
         }
-        this->current = current;
     }
 
-
-// native value and array
-
-    /// @brief Write a value in native byte order and assuming correct alignment
-    /// @tparam T Value type
-    /// @param value value to write
+    /// @brief Write the contents of an array supporting std::size() as big endian 16 bit integers
+    /// @tparam T Array Type
+    /// @param array Array to write
     template <typename T>
-    void value(const T &value) {
-        *reinterpret_cast<T *>(this->current) = value;
-        this->current += sizeof(value);
+    void array16B(const T &array) {
+        for (auto &e : array) {
+            u16B(uint16_t(e));
+        }
     }
-
-    /// @brief Write the contents of an array in native byte order and assuming correct alignment
-    /// @tparam T Array type
-    /// @param array array to write
-    template <typename T>
-    void array(const T &array) {
-        auto src = std::data(array);
-
-        // create dst pointer with same type as src, but not const
-        auto dst = reinterpret_cast<std::add_pointer_t<std::remove_const_t<std::remove_reference_t<decltype(*src)>>>>(this->current);
-
-        auto count = std::size(array);
-        auto size = count * sizeof(*src);
-
-        auto end = src + count;
-        std::copy(src, end, dst);
-        this->current += size;
-    }
-
 
 // data
 
@@ -310,48 +237,31 @@ public:
     /// @param data Data to write
     /// @param size Size of data
     void data(const uint8_t *data, int size) {
-        auto current = this->current;
-        std::copy(data, data + size, current);
-        this->current = current + size;
+        b_.append(data, size);
     }
-
-    /// @brief Write the header of a coco::Buffer
-    /// @param buffer Buffer
-    void header(Buffer &buffer, int size) {
-        data(buffer.headerData(), size);
-    }
-
-    /// @brief Write the data of a buffer
-    /// @tparam T Buffer Type
-    /// @param buffer Buffer
-    template <typename T>
-    void data(T &buffer) {
-        data(std::data(buffer), std::size(buffer));
-    }
-
 
 // string
 
     /// @brief Write a string without length.
     /// @param str String to add
     void string(const String &str) {
-        data(reinterpret_cast<const uint8_t *>(str.data()), str.size());
+        b_.append(reinterpret_cast<const uint8_t *>(str.data()), str.size());
     }
 
     /// @brief Write a padded string.
     /// @param str String to add
-    /// @param size Size of field to be filled with the string, gets padded with zeros if the string is shorter
+    /// @param size Size of field to be filled with the string, gets padded with zeros if the string is shorter and cut off if the string is longer
     void string(const String &str, int size) {
         int l = std::min(str.size(), size);
-        data(reinterpret_cast<const uint8_t *>(str.data()), l);
+        b_.append(reinterpret_cast<const uint8_t *>(str.data()), l);
         fill(size - l);
     }
 
-    /// @brief Write string with preceding 8 bit length
+    /// @brief Write string with preceding 8 bit length.
     /// @param str String to add
     void string8(const String &str) {
         u8(str.size());
-        data(reinterpret_cast<const uint8_t *>(str.data()), str.size());
+        b_.append(reinterpret_cast<const uint8_t *>(str.data()), str.size());
     }
 
 
@@ -359,74 +269,43 @@ public:
 
     /// @brief Write a single character.
     /// @param ch Character to add
-    BufferWriter &operator <<(char ch) {
+    DataWriter &operator <<(char ch) {
         u8(ch);
         return *this;
     }
 
     /// @brief Write a string without length.
     /// @param str String to add
-    BufferWriter &operator <<(const String &str) {
+    DataWriter &operator <<(const String &str) {
         string(str);
         return *this;
     }
 
-    /// @brief Stream a string concept into the writer (C-string, coco::StringBuffer, std::string).
-    /// @tparam T String type
-    /// @param str String to add
-    /*template <typename T> requires (StringConcept<T>)
-    BufferWriter &operator <<(const T &str) {
-        string(String(str));
-        return *this;
-    }*/
-
-
 // other
-
-    /// @brief Skip bytes (does not modify the skipped bytes)
-    /// @param n Number of bytes
-    void skip(int n) {
-        this->current += n;
-    }
 
     /// @brief Fill bytes
     /// @param n Number of bytes
     /// @param value Fill value
-    void fill(int n, int value = 0) {
-        auto end = this->current + n;
-        for (auto it = this->current; it != end; ++it)
-            *it = value;
-        this->current = end;
-    }
-
-    /// @brief Check if the writer is still valid, i.e. did not write past the end
-    /// @return True when before or at the end
-    bool isValid() const {
-        return this->current <= this->end;
-    }
-
-    /// @brief Check if we are at the end of the data
-    /// @return True when at or past the end
-    bool atEnd() const {
-        return this->current >= this->end;
+    void fill(int n, uint8_t value = 0) {
+        for (int i = 0; i < n; ++i)
+            b_.append(value);
     }
 
     /// @brief Get remaining number of bytes in the data
     /// @return Number of remaining bytes
     int remaining() const {
-        return int(this->end - this->current);
+        return b_.remaining();
     }
 
     /// @brief Cast to pointer, e.g. for buffer.write()/send()
     ///
-    operator uint8_t *() const {
-        return this->current;
+    auto current() {
+        return b_.end();
     }
 
-
-    uint8_t *current;
-    uint8_t *end;
+    B b_;
 };
 
+using BufferWriter = DataWriter<Buffer &>;
 
 } // namespace coco

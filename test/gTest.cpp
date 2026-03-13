@@ -24,12 +24,11 @@ void useAsArray(const T &array) {
 }
 
 
+template <int H, int D>
 class TestBuffer : public Buffer {
 public:
-    TestBuffer(uint8_t *data, int size)
-        : Buffer(data, size, State::READY) {}
-    TestBuffer(uint8_t *header, int headerSize, uint8_t *data, int size)
-        : Buffer(header, headerSize, data, size, State::READY) {}
+    TestBuffer()
+        : Buffer(h, H, d, D, State::READY) {}
 
     ~TestBuffer() override {
     }
@@ -41,37 +40,81 @@ public:
     bool cancel() override {
         return false;
     }
+
+    uint8_t h[std::max(H, 1)];
+    alignas(4) uint8_t d[D];
 };
 
 TEST(cocoTest, setHeader) {
-    uint8_t header[8];
-    uint8_t buffer[128];
-    TestBuffer b(header, 8, buffer, 128);
+    TestBuffer<8, 128> buffer;
 
     // value
-    b.setHeader<uint32_t>(10);
-    EXPECT_EQ(b.header<uint32_t>(), 10);
+    buffer.setHeader<uint32_t>(10);
+    EXPECT_EQ(buffer.header<uint32_t>(), 10);
 
     uint64_t u64 = UINT64_C(50000000000);
-    b.setHeader(u64);
-    EXPECT_EQ(b.header<uint64_t>(), u64);
+    buffer.setHeader(u64);
+    EXPECT_EQ(buffer.header<uint64_t>(), u64);
 
     // array
     int a[] = {10, 50};
-    b.setHeader(a);
-    EXPECT_EQ(b.headerPointer<int>()[0], 10);
-    EXPECT_EQ(b.headerPointer<int>()[1], 50);
+    buffer.setHeader(a);
+    EXPECT_EQ(buffer.headerPointer<int>()[0], 10);
+    EXPECT_EQ(buffer.headerPointer<int>()[1], 50);
 
     // data
-    b.setHeader(reinterpret_cast<uint8_t *>(a), sizeof(a));
-    EXPECT_EQ(b.headerPointer<int>()[0], 10);
-    EXPECT_EQ(b.headerPointer<int>()[1], 50);
+    buffer.setHeader(reinterpret_cast<uint8_t *>(a), sizeof(a));
+    EXPECT_EQ(buffer.headerPointer<int>()[0], 10);
+    EXPECT_EQ(buffer.headerPointer<int>()[1], 50);
 
     // check if index operator works in presence of a header
-    b.data()[0] = 55;
-    EXPECT_EQ(b[0], 55);
+    buffer.data()[0] = 55;
+    EXPECT_EQ(buffer[0], 55);
 }
 
+TEST(cocoTest, assign) {
+    TestBuffer<0, 4> buffer;
+    EXPECT_EQ(buffer.capacity(), 4);
+
+    // byte
+    buffer.assign(uint8_t(50));
+    EXPECT_EQ(buffer.size(), 1);
+    EXPECT_EQ(buffer[0], 50);
+
+    // data, size
+    buffer.assign("foo", 3);
+    EXPECT_EQ(buffer.size(), 3);
+    EXPECT_EQ(buffer[2], 'o');
+    buffer.assign("foo__", 5);
+    EXPECT_EQ(buffer.size(), 4);
+
+    // c-string
+    buffer.assign("bar");
+    EXPECT_EQ(buffer.size(), 3);
+    EXPECT_EQ(buffer[2], 'r');
+    buffer.assign("bar__");
+    EXPECT_EQ(buffer.size(), 4);
+    char s1[4] = {'f', 'o', 'o', 0};
+    buffer.assign(s1);
+    EXPECT_EQ(buffer.size(), 3);
+    EXPECT_EQ(buffer[2], 'o');
+
+    // byte span
+    const uint8_t a1[3] = {1, 2, 3};
+    buffer.assign(a1);
+    EXPECT_EQ(buffer.size(), 3);
+    EXPECT_EQ(buffer[2], 3);
+    std::vector<uint8_t> v1{11, 12, 13, 14, 15};
+    buffer.assign(v1);
+    EXPECT_EQ(buffer.size(), 4);
+    EXPECT_EQ(buffer[2], 13);
+    std::list<uint8_t> l1{10, 20, 30};
+    buffer.assign(l1);
+    EXPECT_EQ(buffer.size(), 3);
+    EXPECT_EQ(buffer[2], 30);
+}
+
+    /*
 TEST(cocoTest, writeValue) {
     uint8_t buffer[128];
     TestBuffer b(buffer, 128);
@@ -210,12 +253,12 @@ TEST(cocoTest, readWriteData) {
     EXPECT_EQ(data3[1], 2);
     EXPECT_EQ(data3[2], 32);
 }
+*/
 
 TEST(cocoTest, error) {
-    uint8_t buffer[2];
-    TestBuffer b(buffer, 2);
+    TestBuffer<0, 2> buffer;
 
-    auto error = b.error();
+    auto error = buffer.error();
     EXPECT_TRUE(!error);
     EXPECT_FALSE(error == std::errc::operation_canceled);
 }
@@ -235,7 +278,7 @@ TEST(cocoTest, BufferReader) {
         BufferReader r(v);
     }
 }
-
+/*
 TEST(cocoTest, BufferWriter) {
     {
         BufferWriter w;
@@ -257,7 +300,7 @@ TEST(cocoTest, BufferWriter) {
         w.u64B(0xbaadcafe);
 
         // write the buffer and check size()
-        auto awaitable = b.write(w);
+        auto awaitable = b.writeEnd(w);
         EXPECT_EQ(b.size(), 23);
 
         // read and check data
@@ -373,6 +416,159 @@ TEST(cocoTest, BufferWriter) {
         BufferWriter w(v);
     }
 }
+*/
+/*
+class BufferWrapper {
+public:
+    template <int N>
+    BufferWrapper(uint8_t (&array)[N]) : end_(array), capacity_(array + N) {}
+
+    void append(uint8_t value) {
+        if (remaining() > 0) {
+            *end_ = value;
+            ++end_;
+        }
+    }
+
+    void append(const uint8_t *data, int size) {
+        int n = std::clamp(size, 0, remaining());
+        end_ = std::copy_n(data, n, end_);
+    }
+
+    int remaining() {
+        return capacity_ - end_;
+    }
+
+    uint8_t *end() {return end_;}
+
+protected:
+    uint8_t *end_;
+    uint8_t *capacity_;
+};*/
+
+TEST(cocoTest, BufferWriter) {
+    // test methods with explicit size and endianness
+    {
+        TestBuffer<0, 128> buffer;
+        BufferWriter w(buffer);
+
+        // write some data into the buffer
+        w.u8(10);
+        w.i16L(-50);
+        w.u16B(1337);
+        w.e16L(Enum16::FOO);
+        w.u32L(0xdeadbeef);
+        w.e32L(Enum32::BAR);
+        w.u64B(0xbaadcafe);
+
+        // write the buffer and check size()
+        EXPECT_EQ(buffer.size(), 23);
+
+        // read and check data
+        BufferReader r(buffer);
+        EXPECT_EQ(r.peekU8(), 10);
+        EXPECT_EQ(r.u8(), 10);
+        EXPECT_EQ(r.i16L(), -50);
+        EXPECT_EQ(r.u16B(), 1337);
+        EXPECT_EQ(r.e16L<Enum16>(), Enum16::FOO);
+        EXPECT_EQ(r.u32L(), 0xdeadbeef);
+        EXPECT_EQ(r.e32L<Enum32>(), Enum32::BAR);
+        EXPECT_EQ(r.u64B(), 0xbaadcafe);
+
+        // check that no data is remaining
+        EXPECT_EQ(r.remaining(), 0);
+    }
+
+    // test variable integer
+    {
+        TestBuffer<0, 128> buffer;
+        BufferWriter w(buffer);
+
+        w.uVar(1337);
+        w.uVar(0xbaadcafe);
+
+        EXPECT_EQ(buffer[0], (1337 & 0x7f) | 0x80);
+        EXPECT_EQ(buffer[1], 1337 >> 7);
+        EXPECT_EQ(w.remaining(), 121);
+
+        // read check data
+        BufferReader r(buffer);
+        EXPECT_EQ(r.uVar<uint32_t>(), 1337);
+        EXPECT_EQ(r.uVar<uint32_t>(), 0xbaadcafe);
+        EXPECT_EQ(r.remaining(), 0);
+    }
+
+    // test array() methods
+    {
+        TestBuffer<0, 32> buffer;
+        BufferWriter w(buffer);
+
+        const int array[2] = {10, 50};
+
+        w.array8(array);
+
+        EXPECT_EQ(buffer[0], 10);
+        EXPECT_EQ(buffer[1], 50);
+
+        EXPECT_EQ(w.remaining(), 30);
+    }
+
+    // test string
+    {
+        TestBuffer<0, 128> buffer;
+        BufferWriter w(buffer);
+
+        // string without length
+        w.string("foo");
+
+        // string with preceding 8 bit length
+        w.string8("foo");
+
+        // fixed size string
+        w.string("bar", 8);
+
+        // check written size
+        size_t size = w.current() - buffer.d;
+        EXPECT_EQ(size, 3 + 4 + 8);
+
+        // read to check
+        BufferReader r(buffer); // w is used as end pointer
+
+        EXPECT_EQ(r.string(3), "foo");
+        EXPECT_EQ(r.string8(), "foo");
+        EXPECT_EQ(r.string(8), "bar");
+    }
+
+    // test stream operators
+    {
+        TestBuffer<0, 128> buffer;
+        BufferWriter w(buffer);
+
+        String string = "foo";
+        StringBuffer<10> stringBuffer;
+        stringBuffer << "bar";
+        std::string stdString = "std";
+
+        w << 'c';
+        w << "str";
+        w << string;
+        w << stringBuffer;
+        w << stdString;
+        w << dec(5.001f);
+
+        // read to check
+        BufferReader r(buffer); // w is used as end pointer
+        EXPECT_EQ(r.string(1), "c");
+        EXPECT_EQ(r.string(3), "str");
+        EXPECT_EQ(r.string(3), "foo");
+        EXPECT_EQ(r.string(3), "bar");
+        EXPECT_EQ(r.string(3), "std");
+        EXPECT_EQ(r.string(5), "5.001");
+
+        // check that no data is remaining
+        EXPECT_EQ(r.remaining(), 0);
+    }
+}
 
 TEST(cocoTest, DataBuffer) {
     DataBuffer<16> b;
@@ -393,8 +589,36 @@ TEST(cocoTest, DataBuffer) {
         EXPECT_EQ(element, 10);
     }
 }
+/*
+template <int I = 0>
+struct BW {
+
+    ~BW() {
+        if constexpr (I == 1)
+            std::cout << "~commit" << std::endl;
+    }
+
+    BW<I + 1> u8(uint8_t value) {
+        if (I > 0 && (I & 3) == 0)
+            std::cout << "commit" << std::endl;
+
+        std::cout << "u8" << std::endl;
+        ++i_;
+        return BW<I + 1>{i_};
+    }
+
+    int i_ = 0;
+};
+*/
 
 int main(int argc, char **argv) {
+/*    BW<> w;
+    w.u8(1);
+        //.u8(2)
+        //.u8(3)
+        //.u8(4)
+        //.u8(5);*/
+
     testing::InitGoogleTest(&argc, argv);
     int success = RUN_ALL_TESTS();
     return success;
