@@ -45,7 +45,7 @@ public:
     alignas(4) uint8_t d[D];
 };
 
-TEST(cocoTest, setHeader) {
+TEST(cocoTest, Buffer_setHeader) {
     TestBuffer<8, 128> buffer;
 
     // value
@@ -72,7 +72,7 @@ TEST(cocoTest, setHeader) {
     EXPECT_EQ(buffer[0], 55);
 }
 
-TEST(cocoTest, assign) {
+TEST(cocoTest, Buffer_assign) {
     TestBuffer<0, 4> buffer;
     EXPECT_EQ(buffer.capacity(), 4);
 
@@ -112,6 +112,23 @@ TEST(cocoTest, assign) {
     buffer.assign(l1);
     EXPECT_EQ(buffer.size(), 3);
     EXPECT_EQ(buffer[2], 30);
+}
+
+TEST(cocoTest, Buffer_cast) {
+    TestBuffer<0, 4> buffer;
+    buffer.resize(4);
+    *reinterpret_cast<uint32_t *>(buffer.d) = 1337;
+
+    // cast to base type
+    EXPECT_EQ(buffer.cast<uint32_t>(), 1337);
+
+    // cast to reference of base type
+    buffer.cast<uint32_t &>() = 0xbaadcafe;
+
+    // cast to array
+    auto ar = buffer.cast<Array<uint32_t>>();
+    EXPECT_EQ(ar.size(), 1);
+    EXPECT_EQ(ar[0], 0xbaadcafe);
 }
 
     /*

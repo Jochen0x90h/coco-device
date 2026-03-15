@@ -8,6 +8,7 @@
 #include <coco/RangeConcept.hpp>
 #include <coco/String.hpp>
 #include <coco/StringConcept.hpp>
+#include <coco/TriviallyCopyable.hpp>
 #include <system_error>
 
 
@@ -429,9 +430,26 @@ public:
         return String(data_, size_);
     }
 
+    /// @brief Cast to (reference of) trivially copyable type.
+    /// @tparam T Trivially copyable type or reference, e.g. int, uint16_t &
+    /// @return Value or reference
+    template <typename T> requires (TriviallyCopyable<std::remove_reference_t<T>> && !ArrayConstructible<T>)
+    T cast() {
+        return *reinterpret_cast<std::remove_reference_t<T> *>(data_);
+    }
+
+    /// @brief Cast to type that is constructible like an array.
+    /// @tparam T Array type, e.g. coco::Array, std::string, std::string_view, std::span
+    /// @return Array
+    template <typename T> requires ArrayConstructible<T>
+    T cast() {
+        using Element = std::ranges::range_value_t<T>;
+        return T(reinterpret_cast<Element *>(data_), size_ / sizeof(Element));
+    }
+
     /// @brief Get whole buffer as array
     ///
-    Array<uint8_t> all() {return {data_, int(capacity_)};}
+    //Array<uint8_t> all() {return {data_, int(capacity_)};}
 
 
     /// @brief Assign a byte
