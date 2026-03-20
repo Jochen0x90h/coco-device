@@ -515,7 +515,7 @@ TEST(cocoTest, BufferWriter) {
         EXPECT_EQ(r.remaining(), 0);
     }
 
-    // test array() methods
+    // test array
     {
         TestBuffer<0, 32> buffer;
         BufferWriter w(buffer);
@@ -526,8 +526,25 @@ TEST(cocoTest, BufferWriter) {
 
         EXPECT_EQ(buffer[0], 10);
         EXPECT_EQ(buffer[1], 50);
-
         EXPECT_EQ(w.remaining(), 30);
+    }
+
+    // test data
+    {
+        TestBuffer<0, 32> buffer;
+        BufferWriter w(buffer);
+
+        const uint8_t d1[2] = {uint8_t(1), uint8_t(2)};
+        w.data(d1, 2);
+
+        const int8_t d2[2] = {int8_t(10), int8_t(-50)};
+        w.data(d2, 2);
+
+        EXPECT_EQ(buffer[0], 1);
+        EXPECT_EQ(buffer[1], 2);
+        EXPECT_EQ(buffer[2], 10);
+        EXPECT_EQ(int8_t(buffer[3]), -50);
+        EXPECT_EQ(w.remaining(), 28);
     }
 
     // test string

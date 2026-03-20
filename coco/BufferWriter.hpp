@@ -236,7 +236,8 @@ public:
     /// @brief Write data
     /// @param data Data to write
     /// @param size Size of data
-    void data(const uint8_t *data, int size) {
+    template <typename I> requires (std::input_iterator<I> && ByteConcept<std::iter_value_t<I>>)
+    void data(I data, int size) {
         b_.append(data, size);
     }
 

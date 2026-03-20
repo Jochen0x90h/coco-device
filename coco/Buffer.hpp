@@ -523,14 +523,14 @@ public:
         return *this;
     }
 
-    template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
-    auto &append(I src, int size) {
+    template <typename I> requires (std::input_iterator<I> && ByteConcept<std::iter_value_t<I>>)
+    auto &append(I data, int size) {
         int oldSize = size_;
         size = std::clamp(size, 0, int(capacity_ - oldSize));
         size_ = oldSize + size;
 
         // copy data
-        std::ranges::copy_n(src, size, data_ + oldSize);
+        std::ranges::copy_n(data, size, data_ + oldSize);
 
         return *this;
     }
