@@ -4,7 +4,9 @@
 namespace coco {
 
 void Buffer::setDisabled() {
-    size_ = 0;
+    // clear size and error
+    setSuccess(0);
+
     state_ = State::DISABLED;
     notify(Events::ENTER_DISABLED);
 }

@@ -355,9 +355,10 @@ public:
 
     /// @brief Set the current size of the buffer
     /// @param size size of buffer, gets clamped to the capacity minus the header size
-    void resize(int size) {
+    auto &resize(int size) {
         assert(unsigned(size) <= capacity_);
         size_ = std::clamp(size, 0, int(capacity_));
+        return *this;
     }
 
     /// @brief Index operator
@@ -431,14 +432,25 @@ public:
     }
 
     /// @brief Cast to (reference of) trivially copyable type.
+    /// Note that the alignment of the buffer data needs to be compatible with the type, e.g. 8 for double.
     /// @tparam T Trivially copyable type or reference, e.g. int, uint16_t &
     /// @return Value or reference
-    template <typename T> requires (TriviallyCopyable<std::remove_reference_t<T>> && !ArrayConstructible<T>)
+    template <typename T> requires (TriviallyCopyable<std::remove_reference_t<T>> && !std::is_pointer_v<T> && !ArrayConstructible<T>)
     T cast() {
         return *reinterpret_cast<std::remove_reference_t<T> *>(data_);
     }
 
+    /// @brief Cast to pointer.
+    /// Note that the alignment of the buffer data needs to be compatible with the type, e.g. 8 for double.
+    /// @tparam T Pointer type, e.g. int *
+    /// @return Pointer
+    template <typename T> requires (std::is_pointer_v<T> && !ArrayConstructible<T>)
+    T cast() {
+        return reinterpret_cast<T>(data_);
+    }
+
     /// @brief Cast to type that is constructible like an array.
+    /// Note that the alignment of the buffer data needs to be compatible with the type, e.g. 8 for double.
     /// @tparam T Array type, e.g. coco::Array, std::string, std::string_view, std::span
     /// @return Array
     template <typename T> requires ArrayConstructible<T>

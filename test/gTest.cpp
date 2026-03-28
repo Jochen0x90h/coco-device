@@ -117,18 +117,24 @@ TEST(cocoTest, Buffer_assign) {
 TEST(cocoTest, Buffer_cast) {
     TestBuffer<0, 4> buffer;
     buffer.resize(4);
-    *reinterpret_cast<uint32_t *>(buffer.d) = 1337;
 
     // cast to base type
+    *reinterpret_cast<uint32_t *>(buffer.d) = 1337;
     EXPECT_EQ(buffer.cast<uint32_t>(), 1337);
 
     // cast to reference of base type
     buffer.cast<uint32_t &>() = 0xbaadcafe;
+    EXPECT_EQ(*reinterpret_cast<uint32_t *>(buffer.d), 0xbaadcafe);
+
+    // cast to poiter
+    *buffer.cast<int *>() = 10;
+    EXPECT_EQ(*reinterpret_cast<int *>(buffer.d), 10);
 
     // cast to array
+    buffer.cast<uint32_t &>() = 0xdeadbeef;
     auto ar = buffer.cast<Array<uint32_t>>();
     EXPECT_EQ(ar.size(), 1);
-    EXPECT_EQ(ar[0], 0xbaadcafe);
+    EXPECT_EQ(ar[0], 0xdeadbeef);
 }
 
     /*
