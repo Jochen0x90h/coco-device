@@ -2,6 +2,7 @@
 
 #include "Device.hpp"
 #include <coco/Array.hpp>
+#include <coco/ArrayConcept.hpp>
 #include <coco/ByteConcept.hpp>
 #include <coco/Coroutine.hpp>
 #include <coco/enum.hpp>
