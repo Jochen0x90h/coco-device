@@ -10,6 +10,7 @@
 #include <coco/String.hpp>
 #include <coco/StringConcept.hpp>
 #include <coco/TriviallyCopyable.hpp>
+#include <coco/platform/platform.hpp>
 #include <system_error>
 
 

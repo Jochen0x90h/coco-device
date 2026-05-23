@@ -10,7 +10,6 @@ BufferDevice_cout::BufferDevice_cout(Loop_native &loop, std::string_view name, M
     , loop_(loop)
     , name_(name)
     , delay_(delay)
-    , callback_(makeCallback<BufferDevice_cout, &BufferDevice_cout::handle>(this))
 {
 }
 
@@ -25,7 +24,7 @@ BufferDevice_cout::Buffer &BufferDevice_cout::getBuffer(int index) {
     return buffers_.get(index);
 }
 
-void BufferDevice_cout::handle() {
+void BufferDevice_cout::onTimeout() {
     auto buffer = transfers_.pop();
     if (buffer != nullptr) {
         std::cout << name_ << ": ";
@@ -33,10 +32,8 @@ void BufferDevice_cout::handle() {
         auto op = buffer->op_;
         int headerCapacity = buffer->headerCapacity_;
         int count = buffer->size_;
-        //if ((op & Buffer::Op::COMMAND) != 0)
-        //	std::cout << "command ";
         if (headerCapacity > 0)
-            std::cout << "header " << headerCapacity; // << " (" << int(buffer->headerType_) << ") ";
+            std::cout << "header " << headerCapacity;
         if ((op & Buffer::Op::READ) != 0)
             std::cout << "read ";
         if ((op & Buffer::Op::WRITE) != 0)
@@ -45,7 +42,7 @@ void BufferDevice_cout::handle() {
 
         // check if there are more buffers in the list
         if (!transfers_.empty())
-            loop_.invoke(callback_, delay_);
+            loop_.invoke(*this, delay_);
 
         // set buffer to ready state and notify application
         buffer->setReady();
@@ -82,7 +79,7 @@ bool BufferDevice_cout::Buffer::start() {
 
     // add buffer to list of transfers and let event loop call I2cMaster_cout::handle() when the first was added
     if (device_.transfers_.push(*this))
-        device_.loop_.invoke(device_.callback_, device_.delay_);
+        device_.loop_.invoke(device_, device_.delay_);
 
     // set state
     setBusy();

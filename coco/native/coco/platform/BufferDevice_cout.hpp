@@ -8,7 +8,7 @@ namespace coco {
 
 /// @brief Dummy implementation of a BufferDevice that prints the transfer operations to std::cout
 ///
-class BufferDevice_cout : public BufferDevice {
+class BufferDevice_cout : public BufferDevice, public Loop_native::TimeoutHandler {
 public:
     /// @brief Constructor
     /// @param loop event loop
@@ -20,7 +20,7 @@ public:
 
     /// @brief Buffer for transferring data to/from emulated buffer device
     ///
-    class Buffer : public coco::Buffer, public IntrusiveListNode, public IntrusiveQueueNode {
+    class Buffer : public coco::Buffer, public coco::IntrusiveListNode, public IntrusiveQueueNode {
         friend class BufferDevice_cout;
     public:
         /// @brief Constructor
@@ -46,12 +46,11 @@ public:
     Buffer &getBuffer(int index) override;
 
 protected:
-    void handle();
+    void onTimeout() override;
 
     Loop_native &loop_;
     std::string name_;
     Milliseconds<> delay_;
-    TimedTask<Callback> callback_;
 
     // list of buffers
     IntrusiveList<Buffer> buffers_;

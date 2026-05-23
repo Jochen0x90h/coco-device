@@ -3,6 +3,7 @@
 //#include "StateTasks.hpp"
 #include <coco/Coroutine.hpp>
 #include <coco/enum.hpp>
+#include <coco/platform/platform.hpp>
 #include <cstdint>
 #include <system_error>
 

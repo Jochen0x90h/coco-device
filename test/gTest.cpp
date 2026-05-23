@@ -4,6 +4,7 @@
 #include <coco/BufferWriter.hpp>
 #include <coco/ArrayConcept.hpp>
 #include <coco/StreamOperators.hpp>
+#include <list>
 
 
 using namespace coco;
