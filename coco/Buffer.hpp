@@ -153,11 +153,11 @@ public:
 
     /// @brief Wait until the buffer state changed, e.g. from BUSY to READY.
     /// @return Use co_await on return value to await a state change
-    [[nodiscard]] Awaitable<Events> untilStateChanged() {return {tasks_, Events::ENTER_ANY};}
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilStateChanged() {return {tasks_, Events::ENTER_ANY};}
 
     /// @brief Wait until the buffer is disabled. Does not wait when the device is already in DISABLED state.
     /// @return Use co_await on return value to wait until the buffer becomes disabled
-    [[nodiscard]] Awaitable<Events> untilDisabled() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilDisabled() {
         if (state_ == State::DISABLED)
             return {};
         return {tasks_, Events::ENTER_DISABLED};
@@ -172,7 +172,7 @@ public:
     /// }
     ///
     /// @return Use co_await on return value to wait until the buffer becomes ready
-    [[nodiscard]] Awaitable<Events> untilReady() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilReady() {
         if (state_ == State::READY)
             return {};
         return {tasks_, Events::ENTER_READY};
@@ -188,7 +188,7 @@ public:
     /// // use buffer
     ///
     /// @return Use co_await on return value to wait until the buffer becomes ready or disabled
-    [[nodiscard]] Awaitable<Events> untilReadyOrDisabled() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilReadyOrDisabled() {
         if (state_ == State::READY || state_ == State::DISABLED)
             return {};
         return {tasks_, Events(int(Events::ENTER_READY) | int(Events::ENTER_DISABLED))};
@@ -463,13 +463,13 @@ public:
 
     /// @brief Get whole buffer as array
     ///
-    //Array<uint8_t> all() {return {data_, int(capacity_)};}
+    Array<uint8_t> all() {return {data_, int(capacity_)};}
 
 
     /// @brief Assign a byte
     /// @tparam T
     /// @param value
-    /// @return
+    /// @return *this
     template <typename T> requires ByteConcept<T>
     auto &assign(T value) {
         size_ = 1;
@@ -482,7 +482,7 @@ public:
     /// @tparam I
     /// @param src
     /// @param size
-    /// @return
+    /// @return *this
     template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
     auto &assign(I src, int size) {
         size = std::clamp(size, 0, int(capacity_));
@@ -497,7 +497,7 @@ public:
     /// @brief Assign a C-string.
     /// @tparam T
     /// @param str
-    /// @return
+    /// @return *this
     template <typename T> requires CStringConcept<T>
     auto &assign(const T &str) {
         auto size = std::min(uint32_t(length(str)), capacity_);
@@ -513,7 +513,7 @@ public:
     /// @brief Assign a range supporting std::begin() and std::end().
     /// @tparam T
     /// @param range
-    /// @return
+    /// @return *this
     template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
     auto &assign(const T &range) {
         auto size = std::min(uint32_t(std::ranges::size(range)), capacity_);
@@ -526,6 +526,10 @@ public:
         return *this;
     }
 
+    /// @brief Append a value to the buffer.
+    /// @tparam T Value type
+    /// @param value Value
+    /// @return *this
     template <typename T> requires ByteConcept<T>
     auto &append(T value) {
         int oldSize = size_;
@@ -549,6 +553,10 @@ public:
         return *this;
     }
 
+    /// @brief Append a C-string to the buffer.
+    /// @tparam T Type of C-string (e.g. const char *)
+    /// @param str String to append
+    /// @return *this
     template <typename T> requires CStringConcept<T>
     auto &append(const T &str) {
         uint32_t oldSize = size_;
@@ -570,7 +578,20 @@ public:
 
         // copy data
         auto src = std::ranges::begin(range);
-        std::ranges::copy_n(src, size, data_ + oldSize);
+        auto dst = data_ + oldSize;
+        std::ranges::copy_n(src, size, dst);
+
+        return *this;
+    }
+
+    template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
+    auto &copy(T &&range) {
+        auto size = std::min(uint32_t(std::ranges::size(range)), size_);
+
+        // copy data
+        auto src = data_;
+        auto dst = std::ranges::begin(range);
+        std::ranges::copy_n(src, size, dst);
 
         return *this;
     }
@@ -620,9 +641,9 @@ public:
         return start();
     }*/
 
-    bool startRead() {
+    bool startRead(Op op = Op::NONE) {
         size_ = capacity_;
-        op_ = Op::READ;
+        op_ = Op(int(Op::READ) | int(op));
         return start();
     }
 
@@ -630,46 +651,56 @@ public:
     /// Useful e.g. for UART, USB bulk, radio.
     /// @param op Additional operation flag
     /// @return Use co_await on return value to await completion of receive operation or device being disabled
-    [[nodiscard]] Awaitable<Events> read() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> read(Op op = Op::NONE) {
         size_ = capacity_;
-        op_ = Op::READ;
+        op_ = Op(int(Op::READ) | int(op));
         start();
         return untilReadyOrDisabled();
     }
 
-    bool startRead(int size) {
-        return start(Op::READ, size);
+    bool startRead(int size, Op op = Op::NONE) {
+        size_ = size;
+        op_ = Op(int(Op::READ) | int(op));
+        return start();
     }
 
     /// @brief Convenience function for initiating a read operation of given size.
     /// Useful e.g. for SPI, I2C, USB control, file.
     /// @param size size to read
     /// @return use co_await on return value to await completion of read operation
-    [[nodiscard]] Awaitable<Events> read(int size) {
-        start(Op::READ, size);
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> read(int size, Op op = Op::NONE) {
+        size_ = size;
+        op_ = Op(int(Op::READ) | int(op));
+        start();
         return untilReadyOrDisabled();
     }
 
-    bool startWrite() {
-        return start(Op::WRITE);
+    bool startWrite(Op op = Op::NONE) {
+        op_ = Op(int(Op::WRITE) | int(op));
+        return start();
     }
 
     /// @brief Convenience function for writing data of current size.
     /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> write() {
-        start(Op::WRITE);
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> write(Op op = Op::NONE) {
+        op_ = Op(int(Op::WRITE) | int(op));
+        start();
         return untilReadyOrDisabled();
     }
 
-    bool startWrite(int size) {
-        return start(Op::WRITE, size);
+    bool startWrite(int size, Op op = Op::NONE) {
+        size_ = size;
+        op_ = Op(int(Op::WRITE) | int(op));
+        return start();
     }
 
     /// @brief Convenience function for writing data.
     /// @param size size of data to write
     /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> write(int size) {
-        start(Op::WRITE, size);
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> write(int size, Op op = Op::NONE) {
+        size_ = size;
+        op_ = Op(int(Op::WRITE) | int(op));
+        start();
         return untilReadyOrDisabled();
     }
 
@@ -693,7 +724,7 @@ public:
 
     /// @brief Convenience function for writing data of current size and receiving a reply.
     /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> writeRead() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> writeRead() {
         start(Op::READ_WRITE);
         return untilReadyOrDisabled();
     }
@@ -705,7 +736,7 @@ public:
     /// @brief Convenience function for writing data and receiving a reply.
     /// @param size size of data to write
     /// @return use co_await on return value to await completion of write operation
-    [[nodiscard]] Awaitable<Events> writeRead(int size) {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> writeRead(int size) {
         start(Op::READ_WRITE, size);
         return untilReadyOrDisabled();
     }
@@ -749,21 +780,21 @@ public:
     /// @param op additional operation flag
     /// @return use co_await on return value to await completion of write operation
     template <typename I> requires (std::input_iterator<I> && sizeof(typename std::iter_value_t<I>) == 1)
-    [[nodiscard]] Awaitable<Events> write(I src, int size, Op op = Op::NONE) {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> write(I src, int size, Op op = Op::NONE) {
         assign(src, size);
         start(Op(int(Op::WRITE) | int(op)));
         return untilReadyOrDisabled();
     }
 
     template <typename T> requires CStringConcept<T>
-    [[nodiscard]] Awaitable<Events> write(const T &str, Op op = Op::NONE) {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> write(const T &str, Op op = Op::NONE) {
         assign(str);
         start(Op(int(Op::WRITE) | int(op)));
         return untilReadyOrDisabled();
     }
 
     template <typename T> requires (ByteRangeConcept<T> && !CStringConcept<T>)
-    [[nodiscard]] Awaitable<Events> write(const T &range, Op op = Op::NONE) {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> write(const T &range, Op op = Op::NONE) {
         assign(range);
         start(Op(int(Op::WRITE) | int(op)));
         return untilReadyOrDisabled();
@@ -895,7 +926,7 @@ public:
 
     /// @brief Convenience function for sending an erase command e.g. to an SPI or I2C flash memory.
     ///
-    [[nodiscard]] Awaitable<Events> erase() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> erase() {
         start(Op::ERASE);
         return untilReadyOrDisabled();
     }
@@ -909,7 +940,7 @@ public:
 
     /// @brief Convenience function for acquiring a buffer, i.e. cancel and wait until ready or disabled.
     ///
-    [[nodiscard]] Awaitable<Events> acquire() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> acquire() {
         cancel();
         return untilReadyOrDisabled();
     }
@@ -981,8 +1012,8 @@ protected:
     /// @return *this
     auto &notify(Events events) {
         // resume all coroutines waiting for the given event
-        tasks_.doAll([events](Events e) {
-            return (int(events) & int(e)) != 0;
+        tasks_.doAll([events](auto &task) {
+            return (int(events) & int(task.value)) != 0;
         });
         return *this;
     }

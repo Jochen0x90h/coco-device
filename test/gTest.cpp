@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
+#include <coco/ArrayConcept.hpp>
 #include <coco/Buffer.hpp>
 #include <coco/BufferReader.hpp>
 #include <coco/BufferWriter.hpp>
-#include <coco/ArrayConcept.hpp>
+#include <coco/DataBuffer.hpp>
 #include <coco/StreamOperators.hpp>
 #include <list>
 
@@ -42,8 +43,13 @@ public:
         return false;
     }
 
+    // set marker to ensure that the buffer is not read/written past the end
+    void setMarker(uint8_t value) {
+        d[D] = value;
+    }
+
     uint8_t h[std::max(H, 1)];
-    alignas(4) uint8_t d[D];
+    alignas(4) uint8_t d[D + 1]; // one extra byte as marker
 };
 
 TEST(cocoTest, Buffer_setHeader) {
@@ -113,6 +119,38 @@ TEST(cocoTest, Buffer_assign) {
     buffer.assign(l1);
     EXPECT_EQ(buffer.size(), 3);
     EXPECT_EQ(buffer[2], 30);
+}
+
+TEST(cocoTest, Buffer_copy) {
+    TestBuffer<0, 6> buffer;
+    EXPECT_EQ(buffer.capacity(), 6);
+
+    uint8_t data[6] = {0, 10, 20, 30, 40, 50};
+    buffer.assign(data);
+
+    // copy to larger buffer
+    uint8_t dataL[8] = {};
+    buffer.setMarker(0xff); // set marker behind buffer data
+    buffer.copy(dataL);
+
+    EXPECT_EQ(dataL[1], 10);
+    EXPECT_EQ(dataL[5], 50);
+    EXPECT_EQ(dataL[6], 0); // excess elements should stay empty
+
+    // copy to smaller buffer
+    struct {
+        uint8_t data[4] = {};
+        uint8_t marker = 0xcc; // should not be overwritten
+    } s;
+    buffer.copy(s.data);
+
+    EXPECT_EQ(s.data[1], 10);
+    EXPECT_EQ(s.data[3], 30);
+    EXPECT_EQ(s.marker, 0xcc);
+
+    // use subspan
+    buffer.copy(std::span(dataL).subspan(1));
+    EXPECT_EQ(dataL[2], 10);
 }
 
 TEST(cocoTest, Buffer_cast) {
@@ -474,7 +512,7 @@ TEST(cocoTest, BufferWriter) {
     // test methods with explicit size and endianness
     {
         TestBuffer<0, 128> buffer;
-        BufferWriter w(buffer);
+        BufferWriter w(buffer.all());
 
         // write some data into the buffer
         w.u8(10);
@@ -484,6 +522,7 @@ TEST(cocoTest, BufferWriter) {
         w.u32L(0xdeadbeef);
         w.e32L(Enum32::BAR);
         w.u64B(0xbaadcafe);
+        buffer.resize(w.size());
 
         // write the buffer and check size()
         EXPECT_EQ(buffer.size(), 23);
@@ -506,10 +545,11 @@ TEST(cocoTest, BufferWriter) {
     // test variable integer
     {
         TestBuffer<0, 128> buffer;
-        BufferWriter w(buffer);
+        BufferWriter w(buffer.all());
 
         w.uVar(1337);
         w.uVar(0xbaadcafe);
+        buffer.resize(w.size());
 
         EXPECT_EQ(buffer[0], (1337 & 0x7f) | 0x80);
         EXPECT_EQ(buffer[1], 1337 >> 7);
@@ -525,11 +565,12 @@ TEST(cocoTest, BufferWriter) {
     // test array
     {
         TestBuffer<0, 32> buffer;
-        BufferWriter w(buffer);
+        BufferWriter w(buffer.all());
 
         const int array[2] = {10, 50};
 
         w.array8(array);
+        buffer.resize(w.size());
 
         EXPECT_EQ(buffer[0], 10);
         EXPECT_EQ(buffer[1], 50);
@@ -539,7 +580,7 @@ TEST(cocoTest, BufferWriter) {
     // test data
     {
         TestBuffer<0, 32> buffer;
-        BufferWriter w(buffer);
+        BufferWriter w(buffer.all());
 
         const uint8_t d1[2] = {uint8_t(1), uint8_t(2)};
         w.data(d1, 2);
@@ -557,7 +598,7 @@ TEST(cocoTest, BufferWriter) {
     // test string
     {
         TestBuffer<0, 128> buffer;
-        BufferWriter w(buffer);
+        BufferWriter w(buffer.all());
 
         // string without length
         w.string("foo");
@@ -569,7 +610,7 @@ TEST(cocoTest, BufferWriter) {
         w.string("bar", 8);
 
         // check written size
-        size_t size = w.current() - buffer.d;
+        size_t size = w.size();
         EXPECT_EQ(size, 3 + 4 + 8);
 
         // read to check
@@ -583,7 +624,7 @@ TEST(cocoTest, BufferWriter) {
     // test stream operators
     {
         TestBuffer<0, 128> buffer;
-        BufferWriter w(buffer);
+        BufferWriter w(buffer.all());
 
         String string = "foo";
         StringBuffer<10> stringBuffer;
@@ -596,6 +637,7 @@ TEST(cocoTest, BufferWriter) {
         w << stringBuffer;
         w << stdString;
         w << dec(5.001f);
+        buffer.resize(w.size());
 
         // read to check
         BufferReader r(buffer); // w is used as end pointer

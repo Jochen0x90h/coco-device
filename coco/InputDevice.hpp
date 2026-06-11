@@ -30,7 +30,7 @@ public:
     /// already available.
     /// @param sequenceNumber Sequence number that has already been processed
     /// @return use co_await on return value to wait until new data is available
-    [[nodiscard]] virtual Awaitable<Events> untilInput(int sequenceNumber) = 0;
+    [[nodiscard]] virtual Awaitable<CoroutineTask<Events>> untilInput(int sequenceNumber) = 0;
 };
 
 } // namespace coco

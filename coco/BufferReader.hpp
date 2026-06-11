@@ -10,23 +10,23 @@ namespace coco {
 
 class BufferReader {
 public:
-    BufferReader() : current(), end() {}
+    BufferReader() : begin(), current(), end() {}
 
     /// @brief Constructor.
     /// @param begin Begin of data to read from
     /// @param end End of data to read from
-    BufferReader(const uint8_t *begin, uint8_t *end) : current(begin), end(end) {}
+    BufferReader(const uint8_t *begin, uint8_t *end) : begin(begin), current(begin), end(end) {}
 
     /// @brief Constructor.
     /// @param data Data to read from
     /// @param length Length of data to read from
-    BufferReader(const uint8_t *data, int length) : current(data), end(data + length) {}
+    BufferReader(const uint8_t *data, int length) : begin(begin), current(data), end(data + length) {}
 
     /// @brief Constructor for buffer supporting std::data() and std::size().
     /// @tparam T Buffer type
     /// @param buffer Buffer to read from
     template <typename T>
-    BufferReader(const T &buffer) : current(std::data(buffer)), end(std::data(buffer) + std::size(buffer)) {}
+    BufferReader(const T &buffer) : begin(std::data(buffer)), current(this->begin), end(this->begin + std::size(buffer)) {}
 
     /// @brief Set the reader to the given read position without changing end position.
     /// @param current Current read position
@@ -36,7 +36,7 @@ public:
     /// @param data Data to read from
     /// @param length Length of data to read from
     void assign(const uint8_t *data, int length) {
-        this->current = data;
+        this->begin = this->current = data;
         this->end = data + length;
     }
 
@@ -45,8 +45,8 @@ public:
     /// @param buffer Buffer to read from
     template <typename T>
     void assign(T &buffer) {
-        this->current = std::data(buffer);
-        this->end = this->current + std::size(buffer);
+        this->begin = this->current = std::data(buffer);
+        this->end = this->begin + std::size(buffer);
     }
 
 
@@ -392,11 +392,24 @@ public:
 
     /// @brief Cast to pointer.
     ///
-    operator const uint8_t *() const {
-        return this->current;
+    //operator const uint8_t *() const {
+    //    return this->current;
+    //}
+
+    /// @brief Get processed size;
+    /// @return Size
+    int size() const {
+        return int(this->current - this->begin);
+    }
+
+    /// @brief Reset to the beginning
+    ///
+    void reset() {
+        this->current = this->begin;
     }
 
 
+    const uint8_t *begin;
     const uint8_t *current;
     const uint8_t *end;
 };

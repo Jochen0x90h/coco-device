@@ -132,11 +132,11 @@ public:
 
     /// @brief Wait until the device state changed, e.g. from OPENING to READY
     /// @return use co_await on return value to await a state change
-    [[nodiscard]] Awaitable<Events> untilStateChanged() {return {tasks_, Events::ENTER_ANY};}
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilStateChanged() {return {tasks_, Events::ENTER_ANY};}
 
     /// @brief Wait until the device is disabled. Does not wait when the device is already in DISABLED state.
     /// @return use co_await on return value to wait until the device becomes disabled
-    [[nodiscard]] Awaitable<Events> untilDisabled() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilDisabled() {
         //auto &st = getStateTasks();
         if (state_ == State::DISABLED)
             return {};
@@ -145,7 +145,7 @@ public:
 
     /// @brief Wait until the device is ready. Does not wait when the device is already in READY state.
     /// @return use co_await on return value to wait until the device becomes ready
-    [[nodiscard]] Awaitable<Events> untilReady() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilReady() {
         //auto &st = getStateTasks();
         if (state_ == State::READY)
             return {};
@@ -154,7 +154,7 @@ public:
 
     /// @brief Wait unless the device is ready or disabled. Does not wait when the device is in READY or DISABLED state.
     /// @return use co_await on return value to wait until the device becomes ready or disabled
-    [[nodiscard]] Awaitable<Events> untilReadyOrDisabled() {
+    [[nodiscard]] Awaitable<CoroutineTask<Events>> untilReadyOrDisabled() {
         //auto &st = getStateTasks();
         if (state_ == State::READY || state_ == State::DISABLED)
             return {};
@@ -215,8 +215,8 @@ protected:
     /// @return *this
     auto &notify(Events events) {
         // resume all coroutines waiting for the given event
-        tasks_.doAll([events](Events e) {
-            return (int(events) & int(e)) != 0;
+        tasks_.doAll([events](auto &task) {
+            return (int(events) & int(task.value)) != 0;
         });
         return *this;
     }
